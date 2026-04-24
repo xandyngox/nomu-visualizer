@@ -692,6 +692,7 @@ function loop() {
   resize();
   updateBands();
   updateCrushIntensity();
+  updatePhase();
   updateTextGlitch();
   updateCodeLines();
   updateGrainPos();
@@ -910,6 +911,48 @@ window.addEventListener('keydown', (e) => {
 
 listDevices();
 
+// ---------- layer phase scheduler ----------
+// orchestrates which DOM layers are active. changes every 2–7s so overlays
+// aren't running 24/7. includes occasional empty phases (cleanse moments).
+
+const PHASES = [
+  // gif / blotch / nomu. duplicated entries raise probability of solos.
+  { gif: true,  blot: false, nomu: false }, // gifs only
+  { gif: true,  blot: false, nomu: false },
+  { gif: false, blot: true,  nomu: false }, // blotches only
+  { gif: false, blot: true,  nomu: false },
+  { gif: false, blot: false, nomu: true  }, // nomu only
+  { gif: false, blot: false, nomu: true  },
+  { gif: true,  blot: false, nomu: true  }, // gifs + nomu
+  { gif: false, blot: true,  nomu: true  }, // blotches + nomu
+  { gif: true,  blot: true,  nomu: false }, // gifs + blotches (no text)
+  { gif: true,  blot: true,  nomu: true  }, // everything
+  { gif: false, blot: false, nomu: false }, // empty — breathing room
+];
+let gifsEnabled = true;
+let blotchesEnabled = true;
+let currentPhaseIdx = -1;
+let phaseEndsAt = 0;
+
+function applyPhase(p) {
+  gifsEnabled = p.gif;
+  blotchesEnabled = p.blot;
+  // hide nomu via visibility so its DVD/glitch timers keep ticking underneath
+  const bt = document.getElementById('big-text');
+  if (bt) bt.style.visibility = p.nomu ? '' : 'hidden';
+}
+
+function updatePhase() {
+  const now = performance.now();
+  if (now < phaseEndsAt) return;
+  let next;
+  do { next = Math.floor(Math.random() * PHASES.length); }
+  while (next === currentPhaseIdx && PHASES.length > 1);
+  currentPhaseIdx = next;
+  applyPhase(PHASES[next]);
+  phaseEndsAt = now + 2000 + Math.random() * 5000;
+}
+
 // ---------- floating gif tiles ----------
 
 const GIF_FILES = [
@@ -995,12 +1038,13 @@ function spawnGifBurst() {
 }
 
 (function gifSpawnerTick() {
-  // only count non-flash tiles toward the concurrent-main cap
-  const livingMain = activeGifs.filter(g => !g.dead && !g.isFlash).length;
-  if (livingMain < 1) {
-    spawnGifBurst();
-  } else if (livingMain < MAX_GIFS && Math.random() < 0.35) {
-    spawnGifBurst();
+  if (gifsEnabled) {
+    const livingMain = activeGifs.filter(g => !g.dead && !g.isFlash).length;
+    if (livingMain < 1) {
+      spawnGifBurst();
+    } else if (livingMain < MAX_GIFS && Math.random() < 0.35) {
+      spawnGifBurst();
+    }
   }
   setTimeout(gifSpawnerTick, 300 + Math.random() * 900);
 })();
@@ -1324,13 +1368,15 @@ function spawnBlotch() {
   }, lifespan);
 }
 
-// spawner — stochastic, aims for 2–10 concurrent blotches
+// spawner — stochastic, aims for 2–10 concurrent blotches when enabled
 (function spawnerTick() {
-  const activeCount = blotches.filter(b => !b.fadingOut).length;
-  if (activeCount < MIN_BLOTCHES) {
-    spawnBlotch();
-  } else if (activeCount < MAX_BLOTCHES && Math.random() < 0.45) {
-    spawnBlotch();
+  if (blotchesEnabled) {
+    const activeCount = blotches.filter(b => !b.fadingOut).length;
+    if (activeCount < MIN_BLOTCHES) {
+      spawnBlotch();
+    } else if (activeCount < MAX_BLOTCHES && Math.random() < 0.45) {
+      spawnBlotch();
+    }
   }
   setTimeout(spawnerTick, 120 + Math.random() * 300);
 })();
