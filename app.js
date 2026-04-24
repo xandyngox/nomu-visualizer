@@ -3,7 +3,8 @@
 const canvas = document.getElementById('gl');
 const ui = document.getElementById('ui');
 const err = document.getElementById('err');
-const camSelect = document.getElementById('cam');
+const camSelectA = document.getElementById('cam-a');
+const camSelectB = document.getElementById('cam-b');
 const audSelect = document.getElementById('aud');
 const startBtn = document.getElementById('start');
 
@@ -408,12 +409,49 @@ gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
   -1, -1,  3, -1,  -1, 3,
 ]), gl.STATIC_DRAW);
 
-// ---------- video texture ----------
+// ---------- video texture (two inputs; active one feeds WebGL) ----------
 
-const video = document.createElement('video');
-video.playsInline = true;
-video.muted = true;
-video.autoplay = true;
+function makeVideoEl() {
+  const v = document.createElement('video');
+  v.playsInline = true;
+  v.muted = true;
+  v.autoplay = true;
+  return v;
+}
+const video0 = makeVideoEl();
+const video1 = makeVideoEl();
+/** 0 = camera A, 1 = camera B — switch with 1 / 2 or v */
+let activeCam = 0;
+function activeVideo() {
+  return activeCam === 0 ? video0 : video1;
+}
+const camTag = document.getElementById('cam-tag');
+function updateCamTag() {
+  if (camTag) camTag.textContent = activeCam === 0 ? 'CAM A' : 'CAM B';
+}
+
+// auto-cycle A ↔ B every random 5–10 s (only while running)
+const CAM_CYCLE_MIN_MS = 5000;
+const CAM_CYCLE_MAX_MS = 10000;
+let camCycleTimer = null;
+function clearCamCycleTimer() {
+  if (camCycleTimer != null) {
+    clearTimeout(camCycleTimer);
+    camCycleTimer = null;
+  }
+}
+function scheduleCamCycle() {
+  clearCamCycleTimer();
+  if (!running) return;
+  const delay = CAM_CYCLE_MIN_MS + Math.random() * (CAM_CYCLE_MAX_MS - CAM_CYCLE_MIN_MS);
+  camCycleTimer = setTimeout(() => {
+    camCycleTimer = null;
+    if (!running) return;
+    activeCam ^= 1;
+    updateCamTag();
+    scheduleCamCycle();
+  }, delay);
+}
 
 const videoTex = gl.createTexture();
 gl.bindTexture(gl.TEXTURE_2D, videoTex);
@@ -533,14 +571,20 @@ async function listDevices() {
     return;
   }
   const devs = await navigator.mediaDevices.enumerateDevices();
-  camSelect.innerHTML = '';
+  const videoInputs = devs.filter(d => d.kind === 'videoinput');
+  function fillCamSelect(sel) {
+    sel.innerHTML = '';
+    videoInputs.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `camera ${i + 1}`;
+      sel.appendChild(opt);
+    });
+  }
+  fillCamSelect(camSelectA);
+  fillCamSelect(camSelectB);
+  if (camSelectB.options.length > 1) camSelectB.selectedIndex = 1;
   audSelect.innerHTML = '';
-  devs.filter(d => d.kind === 'videoinput').forEach((d, i) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId;
-    opt.textContent = d.label || `camera ${i + 1}`;
-    camSelect.appendChild(opt);
-  });
   devs.filter(d => d.kind === 'audioinput').forEach((d, i) => {
     const opt = document.createElement('option');
     opt.value = d.deviceId;
@@ -627,26 +671,47 @@ function updateBands() {
 
 let running = false;
 
+const videoConstraints = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+};
+
 async function start() {
   err.textContent = '';
-  const camId = camSelect.value;
+  const camIdA = camSelectA.value;
+  const camIdB = camSelectB.value;
   const audId = audSelect.value;
-  let stream;
+  let streamA;
+  let streamB;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: camId ? { exact: camId } : undefined,
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
-    });
+    if (camIdA === camIdB) {
+      streamA = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: camIdA ? { exact: camIdA } : undefined,
+          ...videoConstraints,
+        },
+        audio: false,
+      });
+      streamB = streamA;
+    } else {
+      [streamA, streamB] = await Promise.all([
+        navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: camIdA }, ...videoConstraints },
+          audio: false,
+        }),
+        navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: camIdB }, ...videoConstraints },
+          audio: false,
+        }),
+      ]);
+    }
   } catch (e) {
     err.textContent = 'camera error: ' + e.message;
     return;
   }
-  video.srcObject = stream;
-  await video.play();
+  video0.srcObject = streamA;
+  video1.srcObject = streamB;
+  await Promise.all([video0.play(), video1.play()]);
 
   try {
     await setupAudio(audId);
@@ -655,8 +720,10 @@ async function start() {
     // keep going — webcam still renders
   }
 
+  updateCamTag();
   ui.classList.add('hidden');
   running = true;
+  scheduleCamCycle();
   requestAnimationFrame(loop);
 }
 
@@ -698,10 +765,11 @@ function loop() {
   updateGrainPos();
   drawWaveform();
 
-  // upload the current video frame into the texture
-  if (video.readyState >= video.HAVE_CURRENT_DATA) {
+  // upload the active camera frame into the texture (both streams stay live)
+  const v = activeVideo();
+  if (v.readyState >= v.HAVE_CURRENT_DATA) {
     gl.bindTexture(gl.TEXTURE_2D, videoTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, v);
   }
 
   bindQuad();
@@ -718,7 +786,7 @@ function loop() {
     gl.bindTexture(gl.TEXTURE_2D, feedA.tex);
     gl.uniform1i(uFb.prev, 1);
     gl.uniform2f(uFb.canvas, fboW, fboH);
-    gl.uniform2f(uFb.video, video.videoWidth || 1, video.videoHeight || 1);
+    gl.uniform2f(uFb.video, v.videoWidth || 1, v.videoHeight || 1);
     const decay = 0.94 + 0.055 * bands.mids;
     gl.uniform1f(uFb.decay, decay);
     gl.uniform1f(uFb.stretch, 1.4 + 0.3 * bands.bass);
@@ -804,7 +872,7 @@ function loop() {
   gl.bindTexture(gl.TEXTURE_2D, videoTex);
   gl.uniform1i(uWcopy.webcam, 0);
   gl.uniform2f(uWcopy.canvas, motionCurr.w, motionCurr.h);
-  gl.uniform2f(uWcopy.video, video.videoWidth || 1, video.videoHeight || 1);
+  gl.uniform2f(uWcopy.video, v.videoWidth || 1, v.videoHeight || 1);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   // --- motion overlay: fxA + motionCurr + motionPrev -> fxB
@@ -895,6 +963,21 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'c') {
     setScene(scene + 1);
+  }
+  if (e.key === '1') {
+    activeCam = 0;
+    updateCamTag();
+    if (running) scheduleCamCycle();
+  }
+  if (e.key === '2') {
+    activeCam = 1;
+    updateCamTag();
+    if (running) scheduleCamCycle();
+  }
+  if (e.key === 'v' || e.key === 'V') {
+    activeCam ^= 1;
+    updateCamTag();
+    if (running) scheduleCamCycle();
   }
   if (e.code === 'Space') {
     e.preventDefault();
