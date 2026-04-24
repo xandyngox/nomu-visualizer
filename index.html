@@ -84,6 +84,81 @@
       filter: url(#vhs-text-filter);
     }
     #hud .tag { margin-bottom: 8px; }
+    #hud-fx-toggles {
+      pointer-events: auto;
+      cursor: default;
+      mix-blend-mode: normal;
+      margin-bottom: 8px;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      line-height: 1.5;
+      max-width: 200px;
+    }
+    #hud-fx-toggles label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 1px 0;
+      text-transform: uppercase;
+    }
+    #hud-fx-toggles input { accent-color: #0f0; flex: 0 0 auto; }
+    #hud-fx-toggles .silhouette-thresh-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0 8px 0;
+      padding-left: 18px;
+    }
+    #hud-fx-toggles .silhouette-thresh-row .lbl {
+      flex: 0 0 54px;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }
+    #hud-fx-toggles .silhouette-thresh-row input[type="range"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 4px;
+      accent-color: #0f0;
+    }
+    #hud-fx-toggles .silhouette-thresh-row .val {
+      flex: 0 0 34px;
+      text-align: right;
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+    }
+    #hud-wave-amp {
+      pointer-events: auto;
+      cursor: default;
+      mix-blend-mode: normal;
+      margin-bottom: 8px;
+      max-width: 200px;
+    }
+    #hud-wave-amp .waveform-amp-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #hud-wave-amp .waveform-amp-row .lbl {
+      flex: 0 0 66px;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }
+    #hud-wave-amp .waveform-amp-row input[type="range"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 4px;
+      accent-color: #0f0;
+    }
+    #hud-wave-amp .waveform-amp-row .val {
+      flex: 0 0 52px;
+      text-align: right;
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+    }
     #text-overlay {
       position: fixed;
       inset: 0;
@@ -266,10 +341,31 @@
 
   <div id="hud">
     <div class="tag">stage 3 — feedback + fx &nbsp;·&nbsp; gain <span id="gain-tag">1.00×</span> &nbsp;·&nbsp; scene <span id="scene-tag">MIRROR</span> &nbsp;·&nbsp; <span id="cam-tag">CAM A</span> &nbsp;·&nbsp; <span id="freeze-tag"></span></div>
+    <div id="hud-fx-toggles">
+      <label><input type="checkbox" id="fx-silhouette" checked /> silhouette</label>
+      <div class="silhouette-thresh-row">
+        <span class="lbl" id="silhouette-thresh-lbl">thresh</span>
+        <input type="range" id="silhouette-thresh" min="0.1" max="0.95" step="0.01" value="0.70" />
+        <span class="val" id="silhouette-thresh-val">0.70</span>
+      </div>
+      <label><input type="checkbox" id="fx-rgb" checked /> rgb offset</label>
+      <label><input type="checkbox" id="fx-sort" checked /> pixel sort</label>
+      <label><input type="checkbox" id="fx-aberr" checked /> chroma aberr</label>
+      <label><input type="checkbox" id="fx-palette" checked /> blue palette</label>
+      <label><input type="checkbox" id="fx-motion" checked /> motion grid</label>
+      <label><input type="checkbox" id="fx-vhs" checked /> vhs / crush</label>
+    </div>
     <div id="bars">
       <div class="row"><span class="lbl">BASS</span><div class="bar"><div id="b-bass"></div></div></div>
       <div class="row"><span class="lbl">MIDS</span><div class="bar"><div id="b-mids"></div></div></div>
       <div class="row"><span class="lbl">HIGH</span><div class="bar"><div id="b-highs"></div></div></div>
+    </div>
+    <div id="hud-wave-amp">
+      <div class="waveform-amp-row">
+        <span class="lbl">wave amp</span>
+        <input type="range" id="waveform-amp" min="0.35" max="100" step="0.1" value="1.2" />
+        <span class="val" id="waveform-amp-val">1.20×</span>
+      </div>
     </div>
   </div>
 
@@ -280,8 +376,12 @@
       <select id="cam-a"></select>
       <label for="cam-b">camera B</label>
       <select id="cam-b"></select>
-      <label for="aud">audio input</label>
+      <label for="cam-c">camera C</label>
+      <select id="cam-c"></select>
+      <label for="aud">audio input (visuals)</label>
       <select id="aud"></select>
+      <label for="aud-wave">audio input (waveform only)</label>
+      <select id="aud-wave"></select>
       <button id="start">start</button>
       <div id="err"></div>
     </div>

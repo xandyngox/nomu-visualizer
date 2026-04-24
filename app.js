@@ -5,7 +5,9 @@ const ui = document.getElementById('ui');
 const err = document.getElementById('err');
 const camSelectA = document.getElementById('cam-a');
 const camSelectB = document.getElementById('cam-b');
+const camSelectC = document.getElementById('cam-c');
 const audSelect = document.getElementById('aud');
+const audWaveSelect = document.getElementById('aud-wave');
 const startBtn = document.getElementById('start');
 
 const barEls = {
@@ -420,14 +422,18 @@ function makeVideoEl() {
 }
 const video0 = makeVideoEl();
 const video1 = makeVideoEl();
-/** 0 = camera A, 1 = camera B — switch with 1 / 2 or v */
+const video2 = makeVideoEl();
+/** 0 = A, 1 = B, 2 = C — switch with 1 / 2 / 3 or v (cycles A→B→C) */
 let activeCam = 0;
 function activeVideo() {
-  return activeCam === 0 ? video0 : video1;
+  if (activeCam === 0) return video0;
+  if (activeCam === 1) return video1;
+  return video2;
 }
 const camTag = document.getElementById('cam-tag');
+const CAM_LABELS = ['CAM A', 'CAM B', 'CAM C'];
 function updateCamTag() {
-  if (camTag) camTag.textContent = activeCam === 0 ? 'CAM A' : 'CAM B';
+  if (camTag) camTag.textContent = CAM_LABELS[activeCam] ?? 'CAM A';
 }
 
 // auto-cycle A ↔ B every random 5–10 s (only while running)
@@ -447,7 +453,7 @@ function scheduleCamCycle() {
   camCycleTimer = setTimeout(() => {
     camCycleTimer = null;
     if (!running) return;
-    activeCam ^= 1;
+    activeCam = (activeCam + 1) % 3;
     updateCamTag();
     scheduleCamCycle();
   }, delay);
@@ -583,22 +589,38 @@ async function listDevices() {
   }
   fillCamSelect(camSelectA);
   fillCamSelect(camSelectB);
+  fillCamSelect(camSelectC);
   if (camSelectB.options.length > 1) camSelectB.selectedIndex = 1;
-  audSelect.innerHTML = '';
-  devs.filter(d => d.kind === 'audioinput').forEach((d, i) => {
-    const opt = document.createElement('option');
-    opt.value = d.deviceId;
-    opt.textContent = d.label || `audio ${i + 1}`;
-    audSelect.appendChild(opt);
-  });
+  if (camSelectC.options.length > 2) camSelectC.selectedIndex = 2;
+  function fillAudSelect(sel) {
+    sel.innerHTML = '';
+    devs.filter(d => d.kind === 'audioinput').forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `audio ${i + 1}`;
+      sel.appendChild(opt);
+    });
+  }
+  fillAudSelect(audSelect);
+  if (audWaveSelect) {
+    fillAudSelect(audWaveSelect);
+    if (audWaveSelect.options.length > 0) {
+      audWaveSelect.selectedIndex = Math.min(
+        audSelect.selectedIndex >= 0 ? audSelect.selectedIndex : 0,
+        audWaveSelect.options.length - 1,
+      );
+    }
+  }
 }
 
 // ---------- audio ----------
 
 let audioCtx = null;
 let analyser = null;
+let analyserWave = null;
 let freqData = null;
 let waveData = null;
+let waveDataWave = null;
 let bandRanges = null;
 const bands = { bass: 0, mids: 0, highs: 0 };
 // transient = positive delta above the expected decay curve — fires on drum hits
@@ -606,32 +628,53 @@ const transients = { bass: 0, mids: 0, highs: 0 };
 const BAND_DECAY = 0.90;      // band peak-follower release
 const TRANSIENT_DECAY = 0.80; // faster release — transients should be short pulses
 
-// audio input gain — tuned via [ / ] during soundcheck so band bars peak
-// around 0.7–0.9 on the loud moments. feeds into bands, transients, strobe.
+// audio input gain — [ / ] during soundcheck; 0 silences audio-reactive drive.
 let audioGain = 1.0;
 const gainTag = document.getElementById('gain-tag');
 
-async function setupAudio(deviceId) {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      // line-in must bypass Chrome's processing or dynamics get crushed
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-    },
+async function setupAudio(deviceIdMain, deviceIdWave) {
+  const micAudio = (deviceId) => ({
+    deviceId: deviceId ? { exact: deviceId } : undefined,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  });
+
+  const streamMain = await navigator.mediaDevices.getUserMedia({
+    audio: micAudio(deviceIdMain),
     video: false,
   });
+  const sameDevice = deviceIdMain === deviceIdWave;
+  const streamWave = sameDevice
+    ? streamMain
+    : await navigator.mediaDevices.getUserMedia({
+        audio: micAudio(deviceIdWave),
+        video: false,
+      });
+
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
-  const src = audioCtx.createMediaStreamSource(stream);
+
+  const srcMain = audioCtx.createMediaStreamSource(streamMain);
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 1024;
-  analyser.smoothingTimeConstant = 0; // we do our own peak-follower
-  src.connect(analyser);
+  analyser.smoothingTimeConstant = 0;
+  srcMain.connect(analyser);
+
+  analyserWave = audioCtx.createAnalyser();
+  analyserWave.fftSize = 1024;
+  analyserWave.smoothingTimeConstant = 0;
+  if (sameDevice) {
+    srcMain.connect(analyserWave);
+  } else {
+    const srcWave = audioCtx.createMediaStreamSource(streamWave);
+    srcWave.connect(analyserWave);
+  }
+
   // no connect to destination — avoid feedback through speakers
   freqData = new Uint8Array(analyser.frequencyBinCount);
   waveData = new Uint8Array(analyser.fftSize);
+  waveDataWave = new Uint8Array(analyserWave.fftSize);
 
   const nyquist = audioCtx.sampleRate / 2;
   const bin = (hz) => {
@@ -676,45 +719,89 @@ const videoConstraints = {
   height: { ideal: 720 },
 };
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True when another attempt may succeed (wireless Continuity, USB hub, driver). */
+function isTransientCameraError(e) {
+  if (!e) return false;
+  if (e.name === 'NotReadableError' || e.name === 'AbortError') return true;
+  const msg = (e.message || String(e)).toLowerCase();
+  return (
+    /allocate|could not start|timed out|busy|in use|start video|source|interrupt/i.test(msg)
+  );
+}
+
+/**
+ * Opens one camera with retries. Continuity Camera / iPhone-as-webcam often
+ * fails the first getUserMedia while the OS link is still coming up — not
+ * caused by JS "being slow", but a short backoff fixes many cases.
+ */
+async function getVideoStreamForDevice(deviceId) {
+  const maxAttempts = 5;
+  const waitBeforeRetryMs = [0, 400, 800, 1400, 2200];
+  let lastErr;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (waitBeforeRetryMs[attempt] > 0) await sleep(waitBeforeRetryMs[attempt]);
+    const relaxed = attempt >= 3;
+    const video = relaxed
+      ? { deviceId: deviceId ? { exact: deviceId } : undefined }
+      : {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          ...videoConstraints,
+        };
+    try {
+      return await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    } catch (e) {
+      lastErr = e;
+      const fatal =
+        e.name === 'NotAllowedError' ||
+        e.name === 'PermissionDeniedError' ||
+        e.name === 'SecurityError';
+      if (fatal) throw e;
+      const retryable = isTransientCameraError(e);
+      if (!retryable || attempt === maxAttempts - 1) throw e;
+    }
+  }
+  throw lastErr;
+}
+
 async function start() {
   err.textContent = '';
   const camIdA = camSelectA.value;
   const camIdB = camSelectB.value;
+  const camIdC = camSelectC.value;
   const audId = audSelect.value;
-  let streamA;
-  let streamB;
+  const audWaveId = audWaveSelect ? audWaveSelect.value : audId;
+  const uniqueCamIds = [...new Set([camIdA, camIdB, camIdC])];
+  const streamsByDevice = new Map();
   try {
-    if (camIdA === camIdB) {
-      streamA = await navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: camIdA ? { exact: camIdA } : undefined,
-          ...videoConstraints,
-        },
-        audio: false,
-      });
-      streamB = streamA;
-    } else {
-      [streamA, streamB] = await Promise.all([
-        navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: camIdA }, ...videoConstraints },
-          audio: false,
-        }),
-        navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: camIdB }, ...videoConstraints },
-          audio: false,
-        }),
-      ]);
+    // One device at a time + pause between *different* devices avoids racing
+    // the macOS camera stack (especially iPhone Continuity + built-in).
+    for (let i = 0; i < uniqueCamIds.length; i++) {
+      const deviceId = uniqueCamIds[i];
+      if (i > 0) await sleep(350);
+      const stream = await getVideoStreamForDevice(deviceId);
+      streamsByDevice.set(deviceId, stream);
     }
   } catch (e) {
-    err.textContent = 'camera error: ' + e.message;
+    const msg = e.message || String(e);
+    err.textContent =
+      'camera error: ' +
+      msg +
+      (isTransientCameraError(e)
+        ? ' — Continuity / phone cameras: unlock iPhone, close Camera on the phone, use one stream (same device in A+B+C), or retry start.'
+        : '');
     return;
   }
-  video0.srcObject = streamA;
-  video1.srcObject = streamB;
-  await Promise.all([video0.play(), video1.play()]);
+  video0.srcObject = streamsByDevice.get(camIdA);
+  video1.srcObject = streamsByDevice.get(camIdB);
+  video2.srcObject = streamsByDevice.get(camIdC);
+  await Promise.all([video0.play(), video1.play(), video2.play()]);
 
   try {
-    await setupAudio(audId);
+    await setupAudio(audId, audWaveId);
   } catch (e) {
     err.textContent = 'audio error: ' + e.message;
     // keep going — webcam still renders
@@ -751,6 +838,58 @@ function bindQuad() {
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 }
+
+/** Copy `srcTex` into fxB (caller swaps fxA/fxB after). */
+function blitSrcToFxB(srcTex) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+  gl.viewport(0, 0, fboW, fboH);
+  gl.useProgram(progBlit);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, srcTex);
+  gl.uniform1i(uBlitTex, 0);
+  bindQuad();
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+const fxToggles = {
+  silhouette: true,
+  rgb: true,
+  sort: true,
+  aberr: true,
+  palette: true,
+  motion: true,
+  vhs: true,
+};
+(function wireFxToggles() {
+  const ids = [
+    'silhouette',
+    'rgb',
+    'sort',
+    'aberr',
+    'palette',
+    'motion',
+    'vhs',
+  ];
+  for (const id of ids) {
+    const el = document.getElementById(`fx-${id}`);
+    if (!el) continue;
+    el.addEventListener('change', () => {
+      fxToggles[id] = el.checked;
+    });
+  }
+})();
+
+// base luma threshold for silhouette (shader: step(threshold, lum)).
+// still modulated by −0.40×bass so kicks pull the threshold down.
+let silhouetteThreshUser = 0.7;
+const silhouetteThreshEl = document.getElementById('silhouette-thresh');
+const silhouetteThreshValEl = document.getElementById('silhouette-thresh-val');
+function syncSilhouetteThreshFromSlider() {
+  if (silhouetteThreshEl) silhouetteThreshUser = parseFloat(silhouetteThreshEl.value) || 0.7;
+  if (silhouetteThreshValEl) silhouetteThreshValEl.textContent = silhouetteThreshUser.toFixed(2);
+}
+if (silhouetteThreshEl) silhouetteThreshEl.addEventListener('input', syncSilhouetteThreshFromSlider);
+syncSilhouetteThreshFromSlider();
 
 function loop() {
   if (!running) return;
@@ -799,67 +938,88 @@ function loop() {
   // === effects chain starts here. first effect reads feedA; subsequent read fxA.
 
   // --- silhouette pass: feedA -> fxB, swap. Threshold pulses low on bass.
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progSilhouette);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, feedA.tex);
-  gl.uniform1i(uSilh.tex, 0);
-  gl.uniform1f(uSilh.thresh, 0.70 - 0.40 * bands.bass);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.silhouette) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progSilhouette);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, feedA.tex);
+    gl.uniform1i(uSilh.tex, 0);
+    const silTh = Math.max(0.02, Math.min(0.99, silhouetteThreshUser - 0.40 * bands.bass));
+    gl.uniform1f(uSilh.thresh, silTh);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(feedA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   // --- RGB channel offset: fxA -> fxB, swap. Bass drives the spread.
   // later collapsed by palette pass — the three displaced samples become a
   // luma smear rather than colored fringes.
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progRGB);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
-  gl.uniform1i(uRGB.tex, 0);
-  gl.uniform1f(uRGB.offset, 0.002 + 0.025 * bands.bass);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.rgb) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progRGB);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+    gl.uniform1i(uRGB.tex, 0);
+    gl.uniform1f(uRGB.offset, 0.002 + 0.025 * bands.bass);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(fxA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   // --- pixel sort: fxA -> fxB, swap. Fires on transients (drum hits).
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progSort);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
-  gl.uniform1i(uSort.tex, 0);
-  gl.uniform2f(uSort.res, fboW, fboH);
-  // use loudest transient across bands; amplify so typical drum hit maxes out
-  const transient = Math.max(transients.bass, transients.mids, transients.highs);
-  gl.uniform1f(uSort.strength, Math.min(1.0, transient * 3.0));
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.sort) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progSort);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+    gl.uniform1i(uSort.tex, 0);
+    gl.uniform2f(uSort.res, fboW, fboH);
+    // use loudest transient across bands; amplify so typical drum hit maxes out
+    const transient = Math.max(transients.bass, transients.mids, transients.highs);
+    gl.uniform1f(uSort.strength, Math.min(1.0, transient * 3.0));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(fxA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   // --- chromatic aberration: fxA -> fxB, swap. Radial falloff, always on.
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progAberr);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
-  gl.uniform1i(uAberr.tex, 0);
-  // ~30px at corners baseline, pushes to ~55px on mids peaks
-  gl.uniform1f(uAberr.strength, 0.015 + 0.012 * bands.mids);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.aberr) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progAberr);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+    gl.uniform1i(uAberr.tex, 0);
+    // ~30px at corners baseline, pushes to ~55px on mids peaks
+    gl.uniform1f(uAberr.strength, 0.015 + 0.012 * bands.mids);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(fxA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   // --- palette pass: luma → blue gradient + strobe on loud peaks
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progPalette);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
-  gl.uniform1i(uPal.tex, 0);
-  // strobe gate: loudest band above threshold → alternate full-white per frame
-  const level = Math.max(bands.bass, bands.mids, bands.highs);
-  const strobe = (level > 0.80 && (frameCount & 1) === 0) ? 1.0 : 0.0;
-  gl.uniform1f(uPal.strobe, strobe);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.palette) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progPalette);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+    gl.uniform1i(uPal.tex, 0);
+    // strobe gate: loudest band above threshold → alternate full-white per frame
+    const level = Math.max(bands.bass, bands.mids, bands.highs);
+    const strobe = (level > 0.80 && (frameCount & 1) === 0) ? 1.0 : 0.0;
+    gl.uniform1f(uPal.strobe, strobe);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(fxA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   frameCount++;
@@ -876,53 +1036,61 @@ function loop() {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   // --- motion overlay: fxA + motionCurr + motionPrev -> fxB
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progMotion);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
-  gl.uniform1i(uMotion.tex, 0);
-  gl.activeTexture(gl.TEXTURE1);
-  gl.bindTexture(gl.TEXTURE_2D, motionCurr.tex);
-  gl.uniform1i(uMotion.curr, 1);
-  gl.activeTexture(gl.TEXTURE2);
-  gl.bindTexture(gl.TEXTURE_2D, motionPrev.tex);
-  gl.uniform1i(uMotion.prev, 2);
-  gl.uniform2f(uMotion.grid, 48.0, 27.0);
-  gl.uniform1f(uMotion.thresh, 0.06);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.motion) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progMotion);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+    gl.uniform1i(uMotion.tex, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, motionCurr.tex);
+    gl.uniform1i(uMotion.curr, 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, motionPrev.tex);
+    gl.uniform1i(uMotion.prev, 2);
+    gl.uniform2f(uMotion.grid, 48.0, 27.0);
+    gl.uniform1f(uMotion.thresh, 0.06);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(fxA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   // swap motion pair so next frame's curr becomes this frame's prev
   { const t = motionCurr; motionCurr = motionPrev; motionPrev = t; }
 
   // --- VHS final: pixel crush, bit quantize, scanlines, grain, brightness osc
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
-  gl.viewport(0, 0, fboW, fboH);
-  gl.useProgram(progVHS);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
-  gl.uniform1i(uVHS.tex, 0);
-  gl.uniform2f(uVHS.res, fboW, fboH);
-  // drive crush/grain/scanline from the choppy crushIntensity (0.30..1.00)
-  const i = crushIntensity;
-  // integer pixel block size so blocks look clean (2..9)
-  gl.uniform1f(uVHS.pixelSize, Math.round(2 + 7 * i));
-  // crush levels jump between 36 (gentle) and 6 (very posterized)
-  gl.uniform1f(uVHS.crushLevels, Math.max(6, Math.round(42 - 36 * i)));
-  gl.uniform1f(uVHS.grain, 0.04 + 0.22 * i);
-  gl.uniform1f(uVHS.scanline, 0.04 + 0.10 * i);
-  const tSec = performance.now() / 1000;
-  // base is dim normal; bass TRANSIENTS punch it to blown-out white on kicks.
-  // small sine drift so quiet sections still breathe.
-  const brightness =
-    0.70
-    + 0.04 * Math.sin(tSec * 0.55)
-    + transients.bass * 4.0
-    + (Math.random() - 0.5) * 0.03;
-  gl.uniform1f(uVHS.brightness, brightness);
-  gl.uniform1f(uVHS.time, tSec);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (fxToggles.vhs) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+    gl.viewport(0, 0, fboW, fboH);
+    gl.useProgram(progVHS);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+    gl.uniform1i(uVHS.tex, 0);
+    gl.uniform2f(uVHS.res, fboW, fboH);
+    // drive crush/grain/scanline from the choppy crushIntensity (0.30..1.00)
+    const i = crushIntensity;
+    // integer pixel block size so blocks look clean (2..9)
+    gl.uniform1f(uVHS.pixelSize, Math.round(2 + 7 * i));
+    // crush levels jump between 36 (gentle) and 6 (very posterized)
+    gl.uniform1f(uVHS.crushLevels, Math.max(6, Math.round(42 - 36 * i)));
+    gl.uniform1f(uVHS.grain, 0.04 + 0.22 * i);
+    gl.uniform1f(uVHS.scanline, 0.04 + 0.10 * i);
+    const tSec = performance.now() / 1000;
+    // base is dim normal; bass TRANSIENTS punch it to blown-out white on kicks.
+    // small sine drift so quiet sections still breathe.
+    const brightness =
+      0.70
+      + 0.04 * Math.sin(tSec * 0.55)
+      + transients.bass * 4.0
+      + (Math.random() - 0.5) * 0.03;
+    gl.uniform1f(uVHS.brightness, brightness);
+    gl.uniform1f(uVHS.time, tSec);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  } else {
+    blitSrcToFxB(fxA.tex);
+  }
   { const t = fxA; fxA = fxB; fxB = t; }
 
   // --- final blit: fxA (latest effects output) -> screen
@@ -974,12 +1142,24 @@ window.addEventListener('keydown', (e) => {
     updateCamTag();
     if (running) scheduleCamCycle();
   }
+  if (e.key === '3') {
+    activeCam = 2;
+    updateCamTag();
+    if (running) scheduleCamCycle();
+  }
   if (e.key === 'v' || e.key === 'V') {
-    activeCam ^= 1;
+    activeCam = (activeCam + 1) % 3;
     updateCamTag();
     if (running) scheduleCamCycle();
   }
   if (e.code === 'Space') {
+    if (
+      e.target &&
+      e.target.closest &&
+      (e.target.closest('#hud-fx-toggles') || e.target.closest('#hud-wave-amp'))
+    ) {
+      return;
+    }
     e.preventDefault();
     frozen = !frozen;
     if (freezeTag) freezeTag.textContent = frozen ? 'FROZEN' : '';
@@ -987,7 +1167,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '[' || e.key === ']') {
     const step = e.shiftKey ? 0.5 : 0.1; // shift for coarse steps
     audioGain += (e.key === ']' ? step : -step);
-    audioGain = Math.max(0.2, Math.min(5.0, audioGain));
+    audioGain = Math.max(0, Math.min(5.0, audioGain));
     if (gainTag) gainTag.textContent = audioGain.toFixed(2) + '×';
   }
 });
@@ -1142,6 +1322,18 @@ const WAVE_HISTORY_LEN = 500;
 const waveHistory = new Float32Array(WAVE_HISTORY_LEN);
 let waveHistoryIdx = 0;
 
+/** vertical scale for scrolling waveform (default matches previous fixed ×1.2) */
+let waveAmpScale = 1.2;
+const waveAmpEl = document.getElementById('waveform-amp');
+const waveAmpValEl = document.getElementById('waveform-amp-val');
+function syncWaveAmpFromSlider() {
+  if (waveAmpEl) waveAmpScale = parseFloat(waveAmpEl.value);
+  if (!Number.isFinite(waveAmpScale) || waveAmpScale < 0.1) waveAmpScale = 1.2;
+  if (waveAmpValEl) waveAmpValEl.textContent = waveAmpScale.toFixed(2) + '×';
+}
+if (waveAmpEl) waveAmpEl.addEventListener('input', syncWaveAmpFromSlider);
+syncWaveAmpFromSlider();
+
 function resizeWave() {
   const dpr = Math.min(window.devicePixelRatio || 1, 1);
   const r = waveCanvas.getBoundingClientRect();
@@ -1152,13 +1344,15 @@ resizeWave();
 window.addEventListener('resize', resizeWave);
 
 function drawWaveform() {
-  if (!analyser || !waveData) return;
-  analyser.getByteTimeDomainData(waveData);
+  const aWf = analyserWave && waveDataWave ? analyserWave : analyser;
+  const bufWf = analyserWave && waveDataWave ? waveDataWave : waveData;
+  if (!aWf || !bufWf) return;
+  aWf.getByteTimeDomainData(bufWf);
 
   // compute peak amplitude for this frame and push into history
   let peak = 0;
-  for (let i = 0; i < waveData.length; i++) {
-    const v = Math.abs(waveData[i] - 128) / 128;
+  for (let i = 0; i < bufWf.length; i++) {
+    const v = Math.abs(bufWf[i] - 128) / 128;
     if (v > peak) peak = v;
   }
   waveHistory[waveHistoryIdx] = peak;
@@ -1169,7 +1363,7 @@ function drawWaveform() {
   waveCtx.clearRect(0, 0, w, h);
 
   const mid = h * 0.5;
-  const amp = h * 0.45 * 1.2; // amplify so quiet signals still read
+  const amp = h * 0.45 * waveAmpScale;
 
   // filled mirror area — top half from peak, bottom half from -peak
   waveCtx.fillStyle = 'rgba(255, 255, 255, 0.28)';
