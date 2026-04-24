@@ -138,7 +138,7 @@ void main() {
   float bright = dot(c, vec3(0.333));
   vec3 acc = c;
 
-  const int MAX_N = 64;
+  const int MAX_N = 32;
   int N = int(u_strength * float(MAX_N));
   for (int i = 1; i <= MAX_N; i++) {
     if (i > N) break;
@@ -428,8 +428,8 @@ gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, 1, 1, 0, gl.RGB, gl.UNSIGNED_BYTE,
 
 // ---------- FBO ping-pong ----------
 
-const MAX_W = 1920;
-const MAX_H = 1080;
+const MAX_W = 1280;
+const MAX_H = 720;
 
 function createFBO(w, h) {
   const tex = gl.createTexture();
@@ -466,8 +466,8 @@ let fxA = null;
 let fxB = null;
 // motion-detection ping-pong — tiny FBOs with downsampled aspect-corrected
 // webcam; frame-diff drives the grid overlay.
-const MOTION_W = 64;
-const MOTION_H = 36;
+const MOTION_W = 48;
+const MOTION_H = 27;
 let motionCurr = null;
 let motionPrev = null;
 let fboW = 0;
@@ -509,7 +509,7 @@ function ensureFBOs() {
 // ---------- sizing ----------
 
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1);
   const w = Math.floor(window.innerWidth * dpr);
   const h = Math.floor(window.innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) {
@@ -820,7 +820,7 @@ function loop() {
   gl.activeTexture(gl.TEXTURE2);
   gl.bindTexture(gl.TEXTURE_2D, motionPrev.tex);
   gl.uniform1i(uMotion.prev, 2);
-  gl.uniform2f(uMotion.grid, MOTION_W, MOTION_H);
+  gl.uniform2f(uMotion.grid, 48.0, 27.0);
   gl.uniform1f(uMotion.thresh, 0.06);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   { const t = fxA; fxA = fxB; fxB = t; }
@@ -969,7 +969,7 @@ const GIF_FILES = [
 ];
 const gifLayer = document.getElementById('gif-layer');
 const activeGifs = [];
-const MAX_GIFS = 5;
+const MAX_GIFS = 3;
 
 function spawnGifTile(opts) {
   opts = opts || {};
@@ -1026,14 +1026,14 @@ function spawnGifTile(opts) {
 // burst = 1 normal tile + 5 rapid-flash tiles at random positions
 function spawnGifBurst() {
   spawnGifTile();
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 3; i++) {
     setTimeout(() => {
       spawnGifTile({
         lifespan: 60 + Math.random() * 140,
         flicker: false,
         flash: true,
       });
-    }, i * (20 + Math.random() * 50));
+    }, i * (25 + Math.random() * 60));
   }
 }
 
@@ -1187,10 +1187,10 @@ const FONTS = [
 const bigTextCanvas = document.getElementById('big-text-canvas');
 const bigTextCtx = bigTextCanvas.getContext('2d');
 const bigTextOffscreen = document.createElement('canvas');
-const NOMU_PIXEL_SCALE = 9; // block size in display px
+const NOMU_PIXEL_SCALE = 6; // block size in display px
 
 function renderBigText(text, fontFamily) {
-  const displayFontSize = Math.max(40, window.innerWidth * 0.04);
+  const displayFontSize = Math.max(80, window.innerWidth * 0.08);
   const fontWeight = 900;
   const fontStr = `${fontWeight} ${displayFontSize}px ${fontFamily}`;
 
@@ -1346,7 +1346,7 @@ function spawnBlotch() {
     ln.className = 'blotch-line';
     ln.textContent = randCodeText(lineChars);
     el.appendChild(ln);
-    lines.push({ el: ln, nextUpdate: 0, baseInterval: 15 + Math.random() * 90 });
+    lines.push({ el: ln, nextUpdate: 0, baseInterval: 40 + Math.random() * 120 });
   }
   codeLinesEl.appendChild(el);
 

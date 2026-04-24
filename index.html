@@ -100,7 +100,6 @@
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
       z-index: 3;
       overflow: hidden;
-      filter: url(#vhs-text-filter);
     }
     .blotch {
       position: absolute;
@@ -122,7 +121,7 @@
       z-index: 4;
       /* grayscale+sepia+hue-rotate collapses the GIFs to the blue palette;
          brightness cranked for the blown-out look; posterize to match crush */
-      filter: grayscale(1) sepia(1) saturate(3.8) hue-rotate(190deg) contrast(1.1) brightness(1.15) url(#vhs-text-filter);
+      filter: url(#gif-palette);
     }
     .gif-tile {
       position: absolute;
@@ -221,6 +220,37 @@
           0 1 0 0 0
           0 0 1 0 0
           0 0 0 10 -4.5"/>
+      </filter>
+      <!-- gif gradient map: luma → navy → purple-blue → pale blue → white.
+           matches the webcam's palette shader. heavier blur + 4-level crush
+           reads as pixelated. done in one filter to avoid CSS chain cost. -->
+      <filter id="gif-palette" color-interpolation-filters="sRGB">
+        <!-- grayscale -->
+        <feColorMatrix type="matrix" values="
+          0.33 0.33 0.33 0 0
+          0.33 0.33 0.33 0 0
+          0.33 0.33 0.33 0 0
+          0    0    0    1 0"/>
+        <!-- same webcam blue shade but skewed toward higher exposure —
+             midtones come out pale-blue, brights blow out to white -->
+        <feComponentTransfer>
+          <feFuncR type="table" tableValues="0.05 0.12 0.50 0.88 1.00"/>
+          <feFuncG type="table" tableValues="0.08 0.22 0.58 0.92 1.00"/>
+          <feFuncB type="table" tableValues="0.25 0.75 0.96 1.00 1.00"/>
+        </feComponentTransfer>
+        <!-- extra exposure boost -->
+        <feColorMatrix type="matrix" values="
+          1.45 0    0    0 0
+          0    1.45 0    0 0
+          0    0    1.45 0 0
+          0    0    0    1 0"/>
+        <!-- chunky: blur + 4-level posterize -->
+        <feGaussianBlur stdDeviation="1.6"/>
+        <feComponentTransfer>
+          <feFuncR type="discrete" tableValues="0 0.33 0.66 1"/>
+          <feFuncG type="discrete" tableValues="0 0.33 0.66 1"/>
+          <feFuncB type="discrete" tableValues="0 0.33 0.66 1"/>
+        </feComponentTransfer>
       </filter>
     </defs>
   </svg>
