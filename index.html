@@ -265,7 +265,7 @@
   </div>
 
   <div id="hud">
-    <div class="tag">stage 3 — feedback + fx &nbsp;·&nbsp; gain <span id="gain-tag">1.00×</span> &nbsp;·&nbsp; scene <span id="scene-tag">MIRROR</span> &nbsp;·&nbsp; <span id="freeze-tag"></span></div>
+    <div class="tag">stage 3 — feedback + fx &nbsp;·&nbsp; gain <span id="gain-tag">1.00×</span> &nbsp;·&nbsp; scene <span id="scene-tag">MIRROR</span> &nbsp;·&nbsp; <span id="cam-tag">CAM A</span> &nbsp;·&nbsp; <span id="freeze-tag"></span></div>
     <div id="bars">
       <div class="row"><span class="lbl">BASS</span><div class="bar"><div id="b-bass"></div></div></div>
       <div class="row"><span class="lbl">MIDS</span><div class="bar"><div id="b-mids"></div></div></div>
@@ -276,8 +276,10 @@
   <div id="ui">
     <div class="panel">
       <h1>audio-reactive visualizer</h1>
-      <label for="cam">camera</label>
-      <select id="cam"></select>
+      <label for="cam-a">camera A</label>
+      <select id="cam-a"></select>
+      <label for="cam-b">camera B</label>
+      <select id="cam-b"></select>
       <label for="aud">audio input</label>
       <select id="aud"></select>
       <button id="start">start</button>
