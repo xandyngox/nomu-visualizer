@@ -1132,13 +1132,18 @@ function spawnGifBurst() {
   setTimeout(gifSpawnerTick, 300 + Math.random() * 900);
 })();
 
-// ---------- waveform oscilloscope ----------
+// ---------- waveform — scrolling recording-style ----------
 
 const waveCanvas = document.getElementById('wave-canvas');
 const waveCtx = waveCanvas.getContext('2d');
 
+// ring buffer of peak amplitudes — scrolls through the canvas over time
+const WAVE_HISTORY_LEN = 500;
+const waveHistory = new Float32Array(WAVE_HISTORY_LEN);
+let waveHistoryIdx = 0;
+
 function resizeWave() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1);
   const r = waveCanvas.getBoundingClientRect();
   waveCanvas.width  = Math.max(1, Math.floor(r.width  * dpr));
   waveCanvas.height = Math.max(1, Math.floor(r.height * dpr));
@@ -1150,28 +1155,59 @@ function drawWaveform() {
   if (!analyser || !waveData) return;
   analyser.getByteTimeDomainData(waveData);
 
+  // compute peak amplitude for this frame and push into history
+  let peak = 0;
+  for (let i = 0; i < waveData.length; i++) {
+    const v = Math.abs(waveData[i] - 128) / 128;
+    if (v > peak) peak = v;
+  }
+  waveHistory[waveHistoryIdx] = peak;
+  waveHistoryIdx = (waveHistoryIdx + 1) % WAVE_HISTORY_LEN;
+
   const w = waveCanvas.width;
   const h = waveCanvas.height;
   waveCtx.clearRect(0, 0, w, h);
 
-  waveCtx.lineWidth = Math.max(1.5, 2 * Math.min(2, window.devicePixelRatio || 1));
-  waveCtx.strokeStyle = '#ffffff';
-  waveCtx.shadowBlur = 10;
-  waveCtx.shadowColor = 'rgba(255, 255, 255, 0.55)';
-
-  waveCtx.beginPath();
-  const n = waveData.length;
   const mid = h * 0.5;
-  // amplify slightly so even quiet signals are visible
-  const amp = h * 0.45 * 1.2;
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * w;
-    const v = (waveData[i] - 128) / 128; // -1..1
-    const y = mid + v * amp;
+  const amp = h * 0.45 * 1.2; // amplify so quiet signals still read
+
+  // filled mirror area — top half from peak, bottom half from -peak
+  waveCtx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+  waveCtx.beginPath();
+  // top edge, oldest to newest (left to right)
+  for (let i = 0; i < WAVE_HISTORY_LEN; i++) {
+    const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
+    const x = (i / (WAVE_HISTORY_LEN - 1)) * w;
+    const y = mid - waveHistory[idx] * amp;
     if (i === 0) waveCtx.moveTo(x, y);
     else         waveCtx.lineTo(x, y);
   }
-  waveCtx.stroke();
+  // back along bottom edge, newest to oldest — closes the filled shape
+  for (let i = WAVE_HISTORY_LEN - 1; i >= 0; i--) {
+    const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
+    const x = (i / (WAVE_HISTORY_LEN - 1)) * w;
+    const y = mid + waveHistory[idx] * amp;
+    waveCtx.lineTo(x, y);
+  }
+  waveCtx.closePath();
+  waveCtx.fill();
+
+  // crisp outline on top and bottom — reads as a shape, not fog
+  waveCtx.lineWidth = 1.5;
+  waveCtx.strokeStyle = '#ffffff';
+  waveCtx.shadowBlur = 6;
+  waveCtx.shadowColor = 'rgba(255,255,255,0.4)';
+  for (const sign of [-1, 1]) {
+    waveCtx.beginPath();
+    for (let i = 0; i < WAVE_HISTORY_LEN; i++) {
+      const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
+      const x = (i / (WAVE_HISTORY_LEN - 1)) * w;
+      const y = mid + sign * waveHistory[idx] * amp;
+      if (i === 0) waveCtx.moveTo(x, y);
+      else         waveCtx.lineTo(x, y);
+    }
+    waveCtx.stroke();
+  }
 }
 
 // ---------- DOM grain overlay (covers text + HUD too) ----------
