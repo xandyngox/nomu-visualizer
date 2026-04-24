@@ -1,4 +1,4 @@
-// visualizer — stage 1: webcam -> WebGL texture -> fullscreen canvas
+// visualizer — live audio-reactive webcam, WebGL effects, DOM overlays
 
 const canvas = document.getElementById('gl');
 const ui = document.getElementById('ui');
@@ -189,10 +189,11 @@ void main() {
   // max-of-channels so the RGB-offset displaced samples show up as a luma ghost
   float lum = max(c.r, max(c.g, c.b));
 
-  // 3-stop blue gradient: deep navy → blue → pale icy blue
-  vec3 dark   = vec3(0.02, 0.04, 0.10);
-  vec3 mid    = vec3(0.10, 0.30, 0.85);
-  vec3 bright = vec3(0.85, 0.95, 1.00);
+  // 3-stop blue gradient: deep navy → pure blue → pale icy blue
+  // green components kept low so midtones don't drift toward teal
+  vec3 dark   = vec3(0.02, 0.03, 0.10);
+  vec3 mid    = vec3(0.08, 0.15, 0.88);
+  vec3 bright = vec3(0.88, 0.90, 1.00);
   vec3 color = (lum < 0.5)
     ? mix(dark, mid, lum * 2.0)
     : mix(mid,  bright, (lum - 0.5) * 2.0);
@@ -201,6 +202,47 @@ void main() {
   color = mix(color, vec3(1.0), u_strobe);
 
   gl_FragColor = vec4(color, 1.0);
+}
+`;
+
+// final VHS/tape pass: pixel-crush, bit-depth quantize, scanlines, per-pixel
+// grain, and a brightness multiplier driven from JS so we can oscillate it.
+const FS_VHS = `
+precision highp float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec2 u_res;
+uniform float u_pixelSize;
+uniform float u_crushLevels;
+uniform float u_grain;
+uniform float u_scanline;
+uniform float u_brightness;
+uniform float u_time;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+  // pixel crush — snap to block grid
+  vec2 pUV = floor(v_uv * u_res / u_pixelSize) * u_pixelSize / u_res;
+  vec3 c = texture2D(u_tex, pUV).rgb;
+
+  // bit-depth crush
+  c = floor(c * u_crushLevels + 0.5) / u_crushLevels;
+
+  // scanlines — every other pixel row slightly darker
+  float line = mod(floor(v_uv.y * u_res.y), 2.0);
+  c *= 1.0 - u_scanline * line;
+
+  // brightness (oscillated in JS)
+  c *= u_brightness;
+
+  // grain
+  float n = hash(v_uv * u_res + u_time * 7.0);
+  c += (n - 0.5) * u_grain;
+
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 `;
 
@@ -342,6 +384,18 @@ const uMotion = {
   prev:   gl.getUniformLocation(progMotion, 'u_prev'),
   grid:   gl.getUniformLocation(progMotion, 'u_grid'),
   thresh: gl.getUniformLocation(progMotion, 'u_thresh'),
+};
+
+const progVHS = program(VS, FS_VHS);
+const uVHS = {
+  tex:         gl.getUniformLocation(progVHS, 'u_tex'),
+  res:         gl.getUniformLocation(progVHS, 'u_res'),
+  pixelSize:   gl.getUniformLocation(progVHS, 'u_pixelSize'),
+  crushLevels: gl.getUniformLocation(progVHS, 'u_crushLevels'),
+  grain:       gl.getUniformLocation(progVHS, 'u_grain'),
+  scanline:    gl.getUniformLocation(progVHS, 'u_scanline'),
+  brightness:  gl.getUniformLocation(progVHS, 'u_brightness'),
+  time:        gl.getUniformLocation(progVHS, 'u_time'),
 };
 
 const progBlit = program(VS, FS_BLIT);
@@ -500,6 +554,7 @@ async function listDevices() {
 let audioCtx = null;
 let analyser = null;
 let freqData = null;
+let waveData = null;
 let bandRanges = null;
 const bands = { bass: 0, mids: 0, highs: 0 };
 // transient = positive delta above the expected decay curve — fires on drum hits
@@ -532,6 +587,7 @@ async function setupAudio(deviceId) {
   src.connect(analyser);
   // no connect to destination — avoid feedback through speakers
   freqData = new Uint8Array(analyser.frequencyBinCount);
+  waveData = new Uint8Array(analyser.fftSize);
 
   const nyquist = audioCtx.sampleRate / 2;
   const bin = (hz) => {
@@ -614,7 +670,7 @@ const freezeTag = document.getElementById('freeze-tag');
 
 // composition scenes — auto-cycles every SCENE_INTERVAL ms; `c` advances manually
 const SCENE_NAMES = ['MIRROR', 'FLIP', 'KALEIDO-H', 'KALEIDO-V', 'QUAD', 'GRID-4', 'GRID-9'];
-const SCENE_INTERVAL = 15000;
+const SCENE_INTERVAL = 5000;
 let scene = 0;
 const sceneTag = document.getElementById('scene-tag');
 function setScene(i) {
@@ -635,8 +691,11 @@ function loop() {
 
   resize();
   updateBands();
+  updateCrushIntensity();
   updateTextGlitch();
-  updateSymbolField();
+  updateCodeLines();
+  updateGrainPos();
+  drawWaveform();
 
   // upload the current video frame into the texture
   if (video.readyState >= video.HAVE_CURRENT_DATA) {
@@ -768,6 +827,35 @@ function loop() {
   // swap motion pair so next frame's curr becomes this frame's prev
   { const t = motionCurr; motionCurr = motionPrev; motionPrev = t; }
 
+  // --- VHS final: pixel crush, bit quantize, scanlines, grain, brightness osc
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fxB.fbo);
+  gl.viewport(0, 0, fboW, fboH);
+  gl.useProgram(progVHS);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, fxA.tex);
+  gl.uniform1i(uVHS.tex, 0);
+  gl.uniform2f(uVHS.res, fboW, fboH);
+  // drive crush/grain/scanline from the choppy crushIntensity (0.30..1.00)
+  const i = crushIntensity;
+  // integer pixel block size so blocks look clean (2..9)
+  gl.uniform1f(uVHS.pixelSize, Math.round(2 + 7 * i));
+  // crush levels jump between 36 (gentle) and 6 (very posterized)
+  gl.uniform1f(uVHS.crushLevels, Math.max(6, Math.round(42 - 36 * i)));
+  gl.uniform1f(uVHS.grain, 0.04 + 0.22 * i);
+  gl.uniform1f(uVHS.scanline, 0.04 + 0.10 * i);
+  const tSec = performance.now() / 1000;
+  // base is dim normal; bass TRANSIENTS punch it to blown-out white on kicks.
+  // small sine drift so quiet sections still breathe.
+  const brightness =
+    0.70
+    + 0.04 * Math.sin(tSec * 0.55)
+    + transients.bass * 4.0
+    + (Math.random() - 0.5) * 0.03;
+  gl.uniform1f(uVHS.brightness, brightness);
+  gl.uniform1f(uVHS.time, tSec);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  { const t = fxA; fxA = fxB; fxB = t; }
+
   // --- final blit: fxA (latest effects output) -> screen
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -796,7 +884,10 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'h') {
     document.getElementById('hud').classList.toggle('hidden');
     document.getElementById('text-overlay').classList.toggle('hidden');
-    document.getElementById('symbol-field').classList.toggle('hidden');
+    document.getElementById('code-lines').classList.toggle('hidden');
+    document.getElementById('grain-overlay').classList.toggle('hidden');
+    document.getElementById('gif-layer').classList.toggle('hidden');
+    document.getElementById('wave-canvas').classList.toggle('hidden');
   }
   if (e.key === 'r') {
     resetFeedback();
@@ -819,6 +910,216 @@ window.addEventListener('keydown', (e) => {
 
 listDevices();
 
+// ---------- floating gif tiles ----------
+
+const GIF_FILES = [
+  'gif_01_bridge_tunnel.gif',
+  'gif_02.gif',
+  'gif_03.gif',
+  'gif_04_beach_aerial_1.gif',
+  'gif_05_beach_aerial_2.gif',
+  'gif_06_DSCF0106.gif',
+  'gif_07_DSCF0113_1.gif',
+  'gif_08_DSCF0113_2.gif',
+  'gif_09_DSCF0133.gif',
+  'gif_10_DSCF0136.gif',
+];
+const gifLayer = document.getElementById('gif-layer');
+const activeGifs = [];
+const MAX_GIFS = 5;
+
+function spawnGifTile(opts) {
+  opts = opts || {};
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  // width/height independent so the tile's aspect is random — object-fit:fill
+  // then stretches the gif to match, giving squashed/elongated clips
+  const width  = 100 + Math.random() * 720;
+  const height = 70  + Math.random() * 480;
+  const x = Math.random() * Math.max(1, W - width);
+  const y = Math.random() * Math.max(1, H - height);
+  const targetOp = 0.30 + Math.random() * 0.30;
+  const lifespan = opts.lifespan ?? (1000 + Math.random() * 3000);
+  const flicker = opts.flicker ?? true;
+  const isFlash = !!opts.flash;
+
+  const el = document.createElement('div');
+  el.className = 'gif-tile';
+  el.style.left = x.toFixed(0) + 'px';
+  el.style.top  = y.toFixed(0) + 'px';
+  el.style.width  = width.toFixed(0) + 'px';
+  el.style.height = height.toFixed(0) + 'px';
+  el.style.opacity = targetOp.toFixed(2);
+
+  const img = document.createElement('img');
+  img.src = 'nomu_gifs/' + GIF_FILES[Math.floor(Math.random() * GIF_FILES.length)];
+  img.decoding = 'async';
+  el.appendChild(img);
+  gifLayer.appendChild(el);
+
+  const entry = { el, dead: false, targetOp, isFlash };
+  activeGifs.push(entry);
+
+  let flickerId = null;
+  if (flicker) {
+    flickerId = setInterval(() => {
+      if (entry.dead) return;
+      if (Math.random() < 0.12) {
+        el.style.opacity = '0';
+        setTimeout(() => { if (!entry.dead) el.style.opacity = entry.targetOp.toFixed(2); }, 40 + Math.random() * 80);
+      }
+    }, 180);
+  }
+
+  setTimeout(() => {
+    entry.dead = true;
+    if (flickerId) clearInterval(flickerId);
+    el.remove();
+    const idx = activeGifs.indexOf(entry);
+    if (idx >= 0) activeGifs.splice(idx, 1);
+  }, lifespan);
+}
+
+// burst = 1 normal tile + 5 rapid-flash tiles at random positions
+function spawnGifBurst() {
+  spawnGifTile();
+  for (let i = 0; i < 5; i++) {
+    setTimeout(() => {
+      spawnGifTile({
+        lifespan: 60 + Math.random() * 140,
+        flicker: false,
+        flash: true,
+      });
+    }, i * (20 + Math.random() * 50));
+  }
+}
+
+(function gifSpawnerTick() {
+  // only count non-flash tiles toward the concurrent-main cap
+  const livingMain = activeGifs.filter(g => !g.dead && !g.isFlash).length;
+  if (livingMain < 1) {
+    spawnGifBurst();
+  } else if (livingMain < MAX_GIFS && Math.random() < 0.35) {
+    spawnGifBurst();
+  }
+  setTimeout(gifSpawnerTick, 300 + Math.random() * 900);
+})();
+
+// ---------- waveform oscilloscope ----------
+
+const waveCanvas = document.getElementById('wave-canvas');
+const waveCtx = waveCanvas.getContext('2d');
+
+function resizeWave() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const r = waveCanvas.getBoundingClientRect();
+  waveCanvas.width  = Math.max(1, Math.floor(r.width  * dpr));
+  waveCanvas.height = Math.max(1, Math.floor(r.height * dpr));
+}
+resizeWave();
+window.addEventListener('resize', resizeWave);
+
+function drawWaveform() {
+  if (!analyser || !waveData) return;
+  analyser.getByteTimeDomainData(waveData);
+
+  const w = waveCanvas.width;
+  const h = waveCanvas.height;
+  waveCtx.clearRect(0, 0, w, h);
+
+  waveCtx.lineWidth = Math.max(1.5, 2 * Math.min(2, window.devicePixelRatio || 1));
+  waveCtx.strokeStyle = '#ffffff';
+  waveCtx.shadowBlur = 10;
+  waveCtx.shadowColor = 'rgba(255, 255, 255, 0.55)';
+
+  waveCtx.beginPath();
+  const n = waveData.length;
+  const mid = h * 0.5;
+  // amplify slightly so even quiet signals are visible
+  const amp = h * 0.45 * 1.2;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * w;
+    const v = (waveData[i] - 128) / 128; // -1..1
+    const y = mid + v * amp;
+    if (i === 0) waveCtx.moveTo(x, y);
+    else         waveCtx.lineTo(x, y);
+  }
+  waveCtx.stroke();
+}
+
+// ---------- DOM grain overlay (covers text + HUD too) ----------
+
+const grainOverlay = document.getElementById('grain-overlay');
+(function initGrain() {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const id = ctx.createImageData(size, size);
+  for (let i = 0; i < id.data.length; i += 4) {
+    const v = Math.random() * 255;
+    id.data[i] = id.data[i + 1] = id.data[i + 2] = v;
+    id.data[i + 3] = 255;
+  }
+  ctx.putImageData(id, 0, 0);
+  grainOverlay.style.backgroundImage = `url('${c.toDataURL()}')`;
+})();
+
+function updateGrainPos() {
+  // re-seed position each frame for animated grain
+  grainOverlay.style.backgroundPosition =
+    `${(Math.random() * 512) | 0}px ${(Math.random() * 512) | 0}px`;
+  // opacity follows the crush intensity so grain jumps with crush
+  grainOverlay.style.opacity = (0.12 + 0.30 * crushIntensity).toFixed(2);
+}
+
+// ---------- crush intensity (choppy, audio-reactive) ----------
+// quantized steps between 30% and 100%. re-picks every 80–380 ms. transients
+// force the top steps; loud sustained sits mid; quiet sits low. controls pixel
+// block size, bit-crush levels, grain amount, scanline darkness.
+const CRUSH_STEPS = [0.30, 0.42, 0.55, 0.70, 0.85, 1.00];
+let crushIntensity = 0.30;
+let nextCrushChange = 0;
+
+function updateCrushIntensity() {
+  const now = performance.now();
+  if (now < nextCrushChange) return;
+  const trans = Math.max(transients.bass, transients.mids, transients.highs);
+  const level = Math.max(bands.bass, bands.mids, bands.highs);
+  let target;
+  if (trans > 0.12) {
+    // transient → top 2 steps
+    target = CRUSH_STEPS[CRUSH_STEPS.length - 1 - (Math.random() < 0.5 ? 0 : 1)];
+  } else if (level > 0.55) {
+    // loud sustained → middle-high (steps 2–5)
+    target = CRUSH_STEPS[2 + Math.floor(Math.random() * 4)];
+  } else {
+    // quiet → low-middle (steps 0–3)
+    target = CRUSH_STEPS[Math.floor(Math.random() * 4)];
+  }
+  crushIntensity = target;
+  nextCrushChange = now + 80 + Math.random() * 300;
+  updateTextFilter();
+}
+
+// update the SVG posterize filter used on DOM overlays (text / code / HUD)
+const fR = document.getElementById('fR');
+const fG = document.getElementById('fG');
+const fB = document.getElementById('fB');
+function updateTextFilter() {
+  if (!fR) return;
+  // 3..8 discrete levels — high intensity = fewer levels = more posterized
+  const levels = Math.max(3, Math.round(9 - 6 * crushIntensity));
+  // evenly distributed discrete tableValues
+  const table = Array.from({ length: levels }, (_, i) =>
+    ((i + 0.5) / levels).toFixed(3)
+  ).join(' ');
+  fR.setAttribute('tableValues', table);
+  fG.setAttribute('tableValues', table);
+  fB.setAttribute('tableValues', table);
+}
+updateTextFilter();
+
 // ---------- text overlay ----------
 
 const bigText = document.getElementById('big-text');
@@ -836,88 +1137,216 @@ const FONTS = [
   '"Brush Script MT", cursive',
   '"Bradley Hand", cursive',
 ];
+// canvas-based pixelation: render "nomu" into a low-res offscreen canvas,
+// then upscale with nearest-neighbor for chunky pixels. re-renders on font
+// change and on window resize.
+const bigTextCanvas = document.getElementById('big-text-canvas');
+const bigTextCtx = bigTextCanvas.getContext('2d');
+const bigTextOffscreen = document.createElement('canvas');
+const NOMU_PIXEL_SCALE = 9; // block size in display px
+
+function renderBigText(text, fontFamily) {
+  const displayFontSize = Math.max(40, window.innerWidth * 0.04);
+  const fontWeight = 900;
+  const fontStr = `${fontWeight} ${displayFontSize}px ${fontFamily}`;
+
+  // measure at display size
+  const octx = bigTextOffscreen.getContext('2d');
+  octx.font = fontStr;
+  const metrics = octx.measureText(text);
+  const textW = Math.ceil(metrics.width) + 8;
+  const textH = Math.ceil(displayFontSize * 1.1);
+
+  // offscreen low-res
+  const offW = Math.max(4, Math.ceil(textW / NOMU_PIXEL_SCALE));
+  const offH = Math.max(4, Math.ceil(textH / NOMU_PIXEL_SCALE));
+  bigTextOffscreen.width = offW;
+  bigTextOffscreen.height = offH;
+  const octx2 = bigTextOffscreen.getContext('2d');
+  octx2.imageSmoothingEnabled = false;
+  octx2.fillStyle = '#fff';
+  octx2.font = `${fontWeight} ${displayFontSize / NOMU_PIXEL_SCALE}px ${fontFamily}`;
+  octx2.textBaseline = 'middle';
+  octx2.textAlign = 'center';
+  octx2.fillText(text, offW / 2, offH / 2);
+
+  // upscale with nearest neighbor — and pin display size so it can't stretch
+  bigTextCanvas.width = textW;
+  bigTextCanvas.height = textH;
+  bigTextCanvas.style.width  = textW + 'px';
+  bigTextCanvas.style.height = textH + 'px';
+  bigTextCtx.imageSmoothingEnabled = false;
+  bigTextCtx.clearRect(0, 0, textW, textH);
+  bigTextCtx.drawImage(bigTextOffscreen, 0, 0, textW, textH);
+}
+
 let fontIdx = 0;
+renderBigText('nomu', FONTS[0]);
 setInterval(() => {
   fontIdx = (fontIdx + 1) % FONTS.length;
-  bigText.style.fontFamily = FONTS[fontIdx];
-}, 120);
+  renderBigText('nomu', FONTS[fontIdx]);
+}, 80);
+window.addEventListener('resize', () => renderBigText('nomu', FONTS[fontIdx]));
+
+// text mode state: centered for 10s, then DVD-bounce for 4.5s, repeat
+let textMode = 'center';
+let textModeEnd = 0;
+let textX = 0, textY = 0;      // offset from center, px
+let textVx = 0, textVy = 0;    // px/sec
+let lastTextTime = 0;
+
+function enterBounce(now) {
+  textMode = 'bounce';
+  textModeEnd = now + 10000;
+  const speed = 520;
+  const angle = Math.random() * Math.PI * 2;
+  textVx = Math.cos(angle) * speed;
+  textVy = Math.sin(angle) * speed;
+}
+function enterCenter(now) {
+  textMode = 'center';
+  textModeEnd = now + 10000;
+  textX = 0; textY = 0;
+}
 
 function updateTextGlitch() {
   if (!bigText) return;
+  const now = performance.now();
+  const dt = lastTextTime ? Math.min(0.05, (now - lastTextTime) / 1000) : 0;
+  lastTextTime = now;
+
+  if (textModeEnd === 0) enterCenter(now);
+  if (now > textModeEnd) (textMode === 'center') ? enterBounce(now) : enterCenter(now);
+
   const trans = Math.max(transients.bass, transients.mids, transients.highs);
+
+  if (textMode === 'bounce') {
+    textX += textVx * dt;
+    textY += textVy * dt;
+    const w = bigText.offsetWidth;
+    const h = bigText.offsetHeight;
+    const maxX = Math.max(0, (window.innerWidth  - w) / 2);
+    const maxY = Math.max(0, (window.innerHeight - h) / 2);
+    if (textX >  maxX) { textX =  maxX; textVx = -Math.abs(textVx); }
+    if (textX < -maxX) { textX = -maxX; textVx =  Math.abs(textVx); }
+    if (textY >  maxY) { textY =  maxY; textVy = -Math.abs(textVy); }
+    if (textY < -maxY) { textY = -maxY; textVy =  Math.abs(textVy); }
+    // glitch opacity still applies over the bounce
+    const r = Math.random();
+    let opacity = 0.8;
+    if (r < 0.05) opacity = 0.0;
+    else if (r < 0.25 + trans * 1.5) opacity = 0.35 + Math.random() * 0.65;
+    bigText.style.opacity = opacity.toFixed(2);
+    bigText.style.transform = `translate(calc(-50% + ${textX.toFixed(0)}px), calc(-50% + ${textY.toFixed(0)}px))`;
+    return;
+  }
+
+  // centered mode — existing jitter behavior
   const r = Math.random();
   let opacity = 0.8;
   let dx = 0, dy = 0;
   if (r < 0.05) {
-    // brief blink out — CRT cut
     opacity = 0.0;
   } else if (r < 0.25 + trans * 1.5) {
-    // jitter frame: vary opacity, offset harder on transients
     opacity = 0.35 + Math.random() * 0.65;
     dx = (Math.random() - 0.5) * (10 + trans * 80);
     dy = (Math.random() - 0.5) * (4 + trans * 25);
   }
   bigText.style.opacity = opacity.toFixed(2);
-  bigText.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  bigText.style.transform = `translate(calc(-50% + ${dx.toFixed(0)}px), calc(-50% + ${dy.toFixed(0)}px))`;
 }
 
 const hex = (n, p = 4) => Math.floor(Math.abs(n)).toString(16).padStart(p, '0').toUpperCase();
 
-// ---------- symbol field ----------
+// ---------- code blotches (random placed patches of rapidly mutating text) ----------
 
-const symField = document.getElementById('symbol-field');
-// weighted toward '+' so it dominates; rest are keyboard/geometric glyphs
-const SYMBOLS = [
-  '+','+','+','+','+','+','+','+','+','+',
-  '×','×','*','*','·','·',
-  '◇','◆','▲','△','■','□','○','•','•',
-  '/','\\',':',';',
-];
-const symbols = [];
-const SYMBOL_COUNT = 60;
+const codeLinesEl = document.getElementById('code-lines');
+// char pool weighted heavy on '+' then other symbols, numbers, letters, brackets
+const CODE_CHARS =
+  '+'.repeat(28) +
+  '*·×◇▲■○•'.repeat(3) +
+  '0123456789abcdefABCDEF'.repeat(2) +
+  '/\\:;<>[](){}=_';
 
-function scatterSymbols() {
-  for (const s of symbols) {
-    s.el.style.left = Math.random() * 100 + '%';
-    s.el.style.top  = Math.random() * 100 + '%';
-    s.el.textContent = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
+const MAX_BLOTCHES = 10;
+const MIN_BLOTCHES = 2;
+const blotches = [];
+
+function randCodeChar() { return CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]; }
+function randCodeText(len) { let s = ''; for (let i = 0; i < len; i++) s += randCodeChar(); return s; }
+
+function spawnBlotch() {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const fontSize = 10 + Math.random() * 11;
+  const lineCount = 1 + Math.floor(Math.random() * 15);
+  const width = 90 + Math.random() * 560;
+  const height = lineCount * fontSize * 1.15 + 4;
+  const x = Math.random() * Math.max(1, W - width);
+  const y = Math.random() * Math.max(1, H - height);
+  const targetOp = (0.3 + Math.random() * 0.5);
+  const charWidth = fontSize * 0.62;
+  const lineChars = Math.max(4, Math.floor(width / charWidth));
+
+  const el = document.createElement('div');
+  el.className = 'blotch';
+  el.style.left = x.toFixed(0) + 'px';
+  el.style.top  = y.toFixed(0) + 'px';
+  el.style.width = width.toFixed(0) + 'px';
+  el.style.fontSize = fontSize.toFixed(1) + 'px';
+  el.style.opacity = '0';
+
+  const lines = [];
+  for (let i = 0; i < lineCount; i++) {
+    const ln = document.createElement('div');
+    ln.className = 'blotch-line';
+    ln.textContent = randCodeText(lineChars);
+    el.appendChild(ln);
+    lines.push({ el: ln, nextUpdate: 0, baseInterval: 15 + Math.random() * 90 });
   }
+  codeLinesEl.appendChild(el);
+
+  const entry = { el, lines, lineChars, fadingOut: false, targetOp };
+  blotches.push(entry);
+
+  // fade in
+  requestAnimationFrame(() => { el.style.opacity = targetOp.toFixed(2); });
+
+  const lifespan = 800 + Math.random() * 3500;
+  setTimeout(() => {
+    entry.fadingOut = true;
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.remove();
+      const idx = blotches.indexOf(entry);
+      if (idx >= 0) blotches.splice(idx, 1);
+    }, 350);
+  }, lifespan);
 }
 
-function createSymbols() {
-  symField.innerHTML = '';
-  symbols.length = 0;
-  for (let i = 0; i < SYMBOL_COUNT; i++) {
-    const el = document.createElement('span');
-    el.className = 'sym';
-    el.textContent = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-    el.style.left = Math.random() * 100 + '%';
-    el.style.top = Math.random() * 100 + '%';
-    el.style.fontSize = (12 + Math.random() * 22) + 'px';
-    const baseOp = 0.35 + Math.random() * 0.35;
-    el.style.opacity = baseOp.toFixed(2);
-    symField.appendChild(el);
-    symbols.push({ el, baseOp });
+// spawner — stochastic, aims for 2–10 concurrent blotches
+(function spawnerTick() {
+  const activeCount = blotches.filter(b => !b.fadingOut).length;
+  if (activeCount < MIN_BLOTCHES) {
+    spawnBlotch();
+  } else if (activeCount < MAX_BLOTCHES && Math.random() < 0.45) {
+    spawnBlotch();
   }
-}
-createSymbols();
+  setTimeout(spawnerTick, 120 + Math.random() * 300);
+})();
 
-// full re-scatter every few seconds so composition evolves through the set
-setInterval(scatterSymbols, 3500);
-
-function updateSymbolField() {
-  if (symbols.length === 0) return;
+function updateCodeLines() {
+  if (blotches.length === 0) return;
+  const now = performance.now();
   const trans = Math.max(transients.bass, transients.mids, transients.highs);
-  const flashProb = 0.02 + trans * 0.9;
-  for (const s of symbols) {
-    if (Math.random() < flashProb) {
-      const scale = 1 + Math.random() * (1 + trans * 4);
-      const rot = (Math.random() - 0.5) * (20 + trans * 140);
-      s.el.style.transform = `scale(${scale.toFixed(2)}) rotate(${rot.toFixed(0)}deg)`;
-      s.el.style.opacity = Math.min(1, s.baseOp + 0.5).toFixed(2);
-    } else {
-      s.el.style.transform = '';
-      s.el.style.opacity = s.baseOp.toFixed(2);
+  const mult = 1 / (1 + trans * 4);
+  for (const b of blotches) {
+    if (b.fadingOut) continue;
+    for (const l of b.lines) {
+      if (now >= l.nextUpdate) {
+        l.el.textContent = randCodeText(b.lineChars);
+        l.nextUpdate = now + l.baseInterval * mult;
+      }
     }
   }
 }

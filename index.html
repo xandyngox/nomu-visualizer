@@ -81,6 +81,7 @@
       pointer-events: none;
       mix-blend-mode: difference;
       z-index: 5;
+      filter: url(#vhs-text-filter);
     }
     #hud .tag { margin-bottom: 8px; }
     #text-overlay {
@@ -88,34 +89,86 @@
       inset: 0;
       pointer-events: none;
       color: #fff;
-      z-index: 4;
+      z-index: 5;
+      filter: url(#vhs-text-filter);
     }
-    #symbol-field {
+    #code-lines {
       position: fixed;
       inset: 0;
       pointer-events: none;
       color: #fff;
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
       z-index: 3;
+      overflow: hidden;
+      filter: url(#vhs-text-filter);
     }
-    .sym {
+    .blotch {
       position: absolute;
-      transform-origin: center;
-      transition: transform 0.18s ease-out, opacity 0.18s ease-out;
-      will-change: transform, opacity;
+      line-height: 1.15;
+      letter-spacing: 0.1em;
+      overflow: hidden;
+      transition: opacity 0.3s;
+      will-change: opacity;
       user-select: none;
+    }
+    .blotch-line {
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    #gif-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 4;
+      /* grayscale+sepia+hue-rotate collapses the GIFs to the blue palette;
+         brightness cranked for the blown-out look; posterize to match crush */
+      filter: grayscale(1) sepia(1) saturate(3.8) hue-rotate(190deg) contrast(1.1) brightness(1.15) url(#vhs-text-filter);
+    }
+    .gif-tile {
+      position: absolute;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.55);
+    }
+    .gif-tile img {
+      width: 100%;
+      height: 100%;
+      object-fit: fill; /* intentional stretch to tile aspect */
+      display: block;
+    }
+    #wave-canvas {
+      position: fixed;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 100%;
+      height: 33vh;
+      z-index: 4;
+      pointer-events: none;
+      opacity: 0.55;
+      filter: url(#vhs-text-filter);
+    }
+    #grain-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 15;
+      mix-blend-mode: overlay;
+      opacity: 0.22;
+      background-repeat: repeat;
+      background-size: 256px 256px;
+      image-rendering: pixelated;
     }
     #big-text {
       position: absolute;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 7vw;
-      letter-spacing: -0.02em;
-      line-height: 0.9;
-      font-weight: 700;
       opacity: 0.8;
-      white-space: nowrap;
+    }
+    #big-text-canvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
     }
     #code-readout {
       position: absolute;
@@ -148,11 +201,36 @@
 </head>
 <body>
   <canvas id="gl"></canvas>
+  <div id="grain-overlay"></div>
 
-  <div id="symbol-field"></div>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <filter id="vhs-text-filter" color-interpolation-filters="sRGB">
+        <feComponentTransfer>
+          <feFuncR id="fR" type="discrete" tableValues="0 0.25 0.5 0.75 1"/>
+          <feFuncG id="fG" type="discrete" tableValues="0 0.25 0.5 0.75 1"/>
+          <feFuncB id="fB" type="discrete" tableValues="0 0.25 0.5 0.75 1"/>
+        </feComponentTransfer>
+        <feGaussianBlur stdDeviation="0.35"/>
+      </filter>
+      <!-- chunky pixelate: big blur + hard alpha threshold snaps edges to blocks -->
+      <filter id="nomu-pixelate" color-interpolation-filters="sRGB">
+        <feGaussianBlur stdDeviation="1.8"/>
+        <feColorMatrix type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          0 0 0 10 -4.5"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <div id="code-lines"></div>
+  <div id="gif-layer"></div>
+  <canvas id="wave-canvas"></canvas>
 
   <div id="text-overlay">
-    <div id="big-text">nomu</div>
+    <div id="big-text"><canvas id="big-text-canvas"></canvas></div>
     <div id="code-readout"></div>
   </div>
 
