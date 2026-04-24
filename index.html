@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>visualizer</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      background: #000;
+      overflow: hidden;
+      cursor: none;
+      color: #0f0;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    #ui {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      z-index: 10;
+    }
+    #ui .panel {
+      border: 1px solid #0f0;
+      padding: 20px 24px;
+      min-width: 360px;
+    }
+    #ui h1 {
+      font-size: 14px;
+      font-weight: 400;
+      margin: 0 0 12px 0;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+    #ui label {
+      display: block;
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin: 10px 0 4px;
+    }
+    #ui select,
+    #ui button {
+      width: 100%;
+      background: #000;
+      color: #0f0;
+      border: 1px solid #0f0;
+      padding: 8px;
+      font: inherit;
+      font-size: 12px;
+    }
+    #ui button {
+      margin-top: 16px;
+      cursor: pointer;
+    }
+    #ui button:hover {
+      background: #0f0;
+      color: #000;
+    }
+    #err {
+      color: #f33;
+      font-size: 11px;
+      margin-top: 10px;
+      min-height: 14px;
+    }
+    #hud {
+      position: fixed;
+      left: 10px;
+      top: 10px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      pointer-events: none;
+      mix-blend-mode: difference;
+      z-index: 5;
+    }
+    #hud .tag { margin-bottom: 8px; }
+    #text-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      color: #fff;
+      z-index: 4;
+    }
+    #symbol-field {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      color: #fff;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      z-index: 3;
+    }
+    .sym {
+      position: absolute;
+      transform-origin: center;
+      transition: transform 0.18s ease-out, opacity 0.18s ease-out;
+      will-change: transform, opacity;
+      user-select: none;
+    }
+    #big-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 7vw;
+      letter-spacing: -0.02em;
+      line-height: 0.9;
+      font-weight: 700;
+      opacity: 0.8;
+      white-space: nowrap;
+    }
+    #code-readout {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      text-align: right;
+      white-space: pre;
+      line-height: 1.55;
+      letter-spacing: 0.08em;
+      opacity: 0.4;
+    }
+    #bars { display: flex; flex-direction: column; gap: 2px; }
+    #bars .row { display: flex; align-items: center; gap: 6px; }
+    #bars .lbl { width: 40px; font-size: 10px; letter-spacing: 0.15em; }
+    #bars .bar {
+      width: 180px;
+      height: 8px;
+      background: rgba(0, 255, 0, 0.15);
+      border: 1px solid #0f0;
+    }
+    #bars .bar > div {
+      height: 100%;
+      width: 0;
+      background: #0f0;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div id="symbol-field"></div>
+
+  <div id="text-overlay">
+    <div id="big-text">nomu</div>
+    <div id="code-readout"></div>
+  </div>
+
+  <div id="hud">
+    <div class="tag">stage 3 — feedback + fx &nbsp;·&nbsp; gain <span id="gain-tag">1.00×</span> &nbsp;·&nbsp; scene <span id="scene-tag">MIRROR</span> &nbsp;·&nbsp; <span id="freeze-tag"></span></div>
+    <div id="bars">
+      <div class="row"><span class="lbl">BASS</span><div class="bar"><div id="b-bass"></div></div></div>
+      <div class="row"><span class="lbl">MIDS</span><div class="bar"><div id="b-mids"></div></div></div>
+      <div class="row"><span class="lbl">HIGH</span><div class="bar"><div id="b-highs"></div></div></div>
+    </div>
+  </div>
+
+  <div id="ui">
+    <div class="panel">
+      <h1>audio-reactive visualizer</h1>
+      <label for="cam">camera</label>
+      <select id="cam"></select>
+      <label for="aud">audio input</label>
+      <select id="aud"></select>
+      <button id="start">start</button>
+      <div id="err"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
