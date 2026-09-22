@@ -2287,7 +2287,7 @@ function saveSettings() {
     localStorage.setItem('nomu-vis', JSON.stringify({
       audioGain, waveGain, exposure, scaleIdx, autoScale, strobeEnabled, fontMode,
       settingsVersion: 2,
-      autoCamCycle, camDisabled: disabled, letterboxIdx, marksEnabled, autoLayout,
+      autoCamCycle, camDisabled: disabled, letterboxIdx, autoLayout,
     }));
   } catch (e) { /* private window / blocked storage — settings just don't persist */ }
 }
@@ -2309,7 +2309,6 @@ function loadSettings() {
     if (s.settingsVersion === 2 && typeof s.letterboxIdx === 'number') {
       letterboxIdx = Math.max(0, Math.min(LETTERBOX_MODES.length - 1, s.letterboxIdx));
     }
-    if (typeof s.marksEnabled === 'boolean') marksEnabled = s.marksEnabled;
     if (typeof s.autoLayout === 'boolean') autoLayout = s.autoLayout;
   } catch (e) { /* ignore */ }
 }
@@ -2578,7 +2577,7 @@ function drawCellMarks() {
   const bot = H - bar;
 
   ctx.lineWidth = 1 / marksDpr;
-  ctx.strokeStyle = 'rgba(232, 238, 255, 0.30)';
+  ctx.strokeStyle = 'rgba(232, 238, 255, 0.55)';
   ctx.fillStyle = 'rgba(232, 238, 255, 0.55)';
   ctx.font = `500 9px ui-monospace, Menlo, monospace`;
   ctx.textBaseline = 'top';
@@ -2611,7 +2610,7 @@ function drawCellMarks() {
 
   // outer safe-area brackets — the frame that makes the whole thing read as
   // a composed shot rather than a full-bleed webcam
-  ctx.strokeStyle = 'rgba(232, 238, 255, 0.22)';
+  ctx.strokeStyle = 'rgba(232, 238, 255, 0.38)';
   bracket(ctx, 22, top + 22, W - 44, (bot - top) - 44, 18);
 
   // tick rule along the bottom safe line, marked every 8th

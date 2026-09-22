@@ -267,6 +267,11 @@
     }
     /* registration marks, cell brackets, tick rules — sits above the GIF/clip
        tiles so the frame always reads as one composed image */
+    /* NOT `lighten` like the other overlays. these are near-white hairlines at
+       low alpha, and lighten would erase them over any bright part of a
+       camera — exactly where you most want a frame drawn. they cover well
+       under 1% of the frame, so drawing them normally costs the camera
+       nothing. */
     #marks-canvas {
       position: fixed;
       inset: 0;
@@ -274,7 +279,6 @@
       height: 100vh;
       pointer-events: none;
       z-index: 6;
-      mix-blend-mode: lighten;
     }
     /* positioned from the top-left by JS against the layout grid, so the
        transform is an absolute offset rather than a centring trick */
