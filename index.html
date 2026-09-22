@@ -4,15 +4,23 @@
   <meta charset="utf-8" />
   <title>visualizer</title>
   <style>
+    /* chrome palette — cold bone-white on near-black. deliberately not the
+       phosphor-green terminal look. */
+    :root {
+      --ink: #e8eaee;
+      --ink-dim: rgba(232, 234, 238, 0.45);
+      --line: rgba(232, 234, 238, 0.35);
+      --bg: #050506;
+    }
     html, body {
       margin: 0;
       padding: 0;
       height: 100%;
       width: 100%;
-      background: #000;
+      background: var(--bg);
       overflow: hidden;
       cursor: none;
-      color: #0f0;
+      color: var(--ink);
       font-family: ui-monospace, Menlo, monospace;
     }
     canvas {
@@ -26,13 +34,14 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #000;
+      background: var(--bg);
       z-index: 10;
+      cursor: default;
     }
     #ui .panel {
-      border: 1px solid #0f0;
+      border: 1px solid var(--line);
       padding: 20px 24px;
-      min-width: 360px;
+      min-width: 420px;
     }
     #ui h1 {
       font-size: 14px;
@@ -46,14 +55,19 @@
       font-size: 11px;
       letter-spacing: 0.15em;
       text-transform: uppercase;
-      margin: 10px 0 4px;
+      margin: 14px 0 4px;
+    }
+    .hint {
+      color: var(--ink-dim);
+      letter-spacing: 0.05em;
+      text-transform: none;
     }
     #ui select,
     #ui button {
       width: 100%;
-      background: #000;
-      color: #0f0;
-      border: 1px solid #0f0;
+      background: var(--bg);
+      color: var(--ink);
+      border: 1px solid var(--line);
       padding: 8px;
       font: inherit;
       font-size: 12px;
@@ -61,17 +75,101 @@
     #ui button {
       margin-top: 16px;
       cursor: pointer;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
     }
     #ui button:hover {
-      background: #0f0;
-      color: #000;
+      background: var(--ink);
+      color: var(--bg);
+    }
+
+    /* camera list — one row per detected video input, updated live */
+    #cam-list {
+      border: 1px solid var(--line);
+      max-height: 190px;
+      overflow-y: auto;
+    }
+    .cam-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(232, 234, 238, 0.12);
+    }
+    .cam-row:last-child { border-bottom: 0; }
+    .cam-row:hover { background: rgba(232, 234, 238, 0.06); }
+    .cam-row input { accent-color: var(--ink); }
+    .cam-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* slot number shown once the camera is actually open and in rotation */
+    .cam-slot {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--bg);
+      background: var(--ink);
+      min-width: 16px;
+      text-align: center;
+      border-radius: 2px;
+    }
+    .cam-slot:empty { background: none; }
+    .cam-none {
+      padding: 10px 8px;
+      font-size: 12px;
+      color: var(--ink-dim);
+    }
+    .cam-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 6px;
+      font-size: 11px;
+    }
+    #ui button.mini {
+      width: auto;
+      margin: 0;
+      padding: 4px 12px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
     }
     #err {
-      color: #f33;
+      color: #ff6b6b;
       font-size: 11px;
       margin-top: 10px;
       min-height: 14px;
     }
+
+    /* hotkey sheet — toggled with ? */
+    #help {
+      position: fixed;
+      right: 16px;
+      top: 16px;
+      z-index: 20;
+      background: rgba(5, 5, 6, 0.88);
+      border: 1px solid var(--line);
+      padding: 14px 16px;
+      font-size: 11px;
+      line-height: 1.5;
+      letter-spacing: 0.06em;
+      pointer-events: none;
+      column-count: 1;
+    }
+    .hk-title {
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      margin-bottom: 8px;
+      color: var(--ink-dim);
+    }
+    .hk { display: flex; gap: 12px; }
+    .hk-k { width: 78px; color: var(--ink); }
+    .hk-d { color: var(--ink-dim); }
+    .hk-sp { height: 7px; }
     #hud {
       position: fixed;
       left: 10px;
@@ -126,7 +224,7 @@
     .gif-tile {
       position: absolute;
       overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.55);
+      border: 1px solid rgba(232, 238, 255, 0.28);
     }
     .gif-tile img {
       width: 100%;
@@ -134,35 +232,38 @@
       object-fit: fill; /* intentional stretch to tile aspect */
       display: block;
     }
+    /* anchored to the lower third instead of dead centre. a 33vh band across
+       the middle at 0.55 sat exactly where the performer is and was one of
+       the biggest things hiding them. */
     #wave-canvas {
       position: fixed;
       left: 0;
-      top: 50%;
-      transform: translateY(-50%);
+      bottom: 4vh;
       width: 100%;
-      height: 33vh;
+      height: 16vh;
       z-index: 4;
       pointer-events: none;
-      opacity: 0.55;
+      opacity: 0.32;
       filter: url(#vhs-text-filter);
     }
-    #grain-overlay {
+    /* registration marks, cell brackets, tick rules — sits above the GIF/clip
+       tiles so the frame always reads as one composed image */
+    #marks-canvas {
       position: fixed;
       inset: 0;
+      width: 100vw;
+      height: 100vh;
       pointer-events: none;
-      z-index: 15;
-      mix-blend-mode: overlay;
-      opacity: 0.22;
-      background-repeat: repeat;
-      background-size: 256px 256px;
-      image-rendering: pixelated;
+      z-index: 6;
     }
+    /* positioned from the top-left by JS against the layout grid, so the
+       transform is an absolute offset rather than a centring trick */
     #big-text {
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
+      top: 0;
+      left: 0;
       opacity: 0.8;
+      will-change: transform, opacity;
     }
     #big-text-canvas {
       display: block;
@@ -187,20 +288,19 @@
     #bars .bar {
       width: 180px;
       height: 8px;
-      background: rgba(0, 255, 0, 0.15);
-      border: 1px solid #0f0;
+      background: rgba(232, 234, 238, 0.15);
+      border: 1px solid var(--line);
     }
     #bars .bar > div {
       height: 100%;
       width: 0;
-      background: #0f0;
+      background: var(--ink);
     }
     .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <canvas id="gl"></canvas>
-  <div id="grain-overlay"></div>
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
@@ -231,26 +331,31 @@
           0.33 0.33 0.33 0 0
           0.33 0.33 0.33 0 0
           0    0    0    1 0"/>
-        <!-- same webcam blue shade but skewed toward higher exposure —
-             midtones come out pale-blue, brights blow out to white -->
+        <!-- luma -> palette ramp. these tables are rewritten from JS whenever
+             the active palette changes, so GIF and clip tiles are graded by
+             the same ramp as the camera instead of a baked-in blue. -->
         <feComponentTransfer>
-          <feFuncR type="table" tableValues="0.05 0.12 0.50 0.88 1.00"/>
-          <feFuncG type="table" tableValues="0.08 0.22 0.58 0.92 1.00"/>
-          <feFuncB type="table" tableValues="0.25 0.75 0.96 1.00 1.00"/>
+          <feFuncR id="gifR" type="table" tableValues="0.05 0.12 0.50 0.88 1.00"/>
+          <feFuncG id="gifG" type="table" tableValues="0.08 0.22 0.58 0.92 1.00"/>
+          <feFuncB id="gifB" type="table" tableValues="0.25 0.75 0.96 1.00 1.00"/>
         </feComponentTransfer>
-        <!-- extra exposure boost -->
-        <feColorMatrix type="matrix" values="
-          1.45 0    0    0 0
-          0    1.45 0    0 0
-          0    0    1.45 0 0
-          0    0    0    1 0"/>
-        <!-- chunky: blur + 4-level posterize -->
-        <feGaussianBlur stdDeviation="1.6"/>
-        <feComponentTransfer>
-          <feFuncR type="discrete" tableValues="0 0.33 0.66 1"/>
-          <feFuncG type="discrete" tableValues="0 0.33 0.66 1"/>
-          <feFuncB type="discrete" tableValues="0 0.33 0.66 1"/>
-        </feComponentTransfer>
+        <!-- exposure, tracked from JS. stays at 1.0 by default — anything
+             above that pushes the ramp's top stop past white and posterises
+             the highlights for free, which is what "cooked" looks like. -->
+        <feColorMatrix id="gif-bright-matrix" type="matrix" values="
+          1 0 0 0 0
+          0 1 0 0 0
+          0 0 1 0 0
+          0 0 0 1 0"/>
+        <!-- deliberately nothing after this point.
+             there used to be a 1.6px blur and a 4-level discrete posterize
+             here. the posterize is the problem: the ramp above is a smooth
+             5-stop curve, and quantising its output to 0/0.33/0.66/1 throws
+             that away and replaces it with four hard bands — so the tiles came
+             out saturated and cooked instead of sharing the camera's grading.
+             these tiles are DOM, above the GL canvas, so the film pass never
+             reaches them — whatever this filter does is final. it should do
+             one job: map luma onto the current palette ramp, cleanly. -->
       </filter>
     </defs>
   </svg>
@@ -258,6 +363,7 @@
   <div id="code-lines"></div>
   <div id="gif-layer"></div>
   <canvas id="wave-canvas"></canvas>
+  <canvas id="marks-canvas"></canvas>
 
   <div id="text-overlay">
     <div id="big-text"><canvas id="big-text-canvas"></canvas></div>
@@ -265,7 +371,23 @@
   </div>
 
   <div id="hud">
-    <div class="tag">stage 3 — feedback + fx &nbsp;·&nbsp; gain <span id="gain-tag">1.00×</span> &nbsp;·&nbsp; scene <span id="scene-tag">MIRROR</span> &nbsp;·&nbsp; <span id="cam-tag">CAM A</span> &nbsp;·&nbsp; <span id="freeze-tag"></span></div>
+    <div class="tag">
+      <span id="rig-tag">FULL</span> / <span id="pal-tag">ICE</span> / <span id="scene-tag">MIRROR</span>
+      &nbsp;·&nbsp; <span id="bpm-tag">150</span> bpm
+      &nbsp;·&nbsp; <span id="auto-tag">AUTO</span>
+      &nbsp;·&nbsp; <span id="cam-tag">NO CAM</span>
+      &nbsp;·&nbsp; <span id="layout-tag">SOLO</span>
+      &nbsp;·&nbsp; <span id="aspect-tag">2.00</span>
+    </div>
+    <div class="tag">
+      gain <span id="gain-tag">1.00×</span>
+      &nbsp;·&nbsp; wave <span id="wave-tag">1.00×</span>
+      &nbsp;·&nbsp; exp <span id="exp-tag">1.00×</span>
+      &nbsp;·&nbsp; <span id="scale-tag">100%</span>
+      &nbsp;·&nbsp; <span id="fps-tag">60</span> fps
+      &nbsp;<span id="freeze-tag"></span>&nbsp;<span id="blackout-tag"></span>&nbsp;<span id="camauto-tag"></span>&nbsp;<span id="ascii-tag"></span>&nbsp;<span id="strobe-tag"></span>
+    </div>
+    <div class="tag hint">? for hotkeys</div>
     <div id="bars">
       <div class="row"><span class="lbl">BASS</span><div class="bar"><div id="b-bass"></div></div></div>
       <div class="row"><span class="lbl">MIDS</span><div class="bar"><div id="b-mids"></div></div></div>
@@ -273,13 +395,17 @@
     </div>
   </div>
 
+  <div id="help" class="hidden"></div>
+
   <div id="ui">
     <div class="panel">
       <h1>audio-reactive visualizer</h1>
-      <label for="cam-a">camera A</label>
-      <select id="cam-a"></select>
-      <label for="cam-b">camera B</label>
-      <select id="cam-b"></select>
+      <label>cameras <span class="hint">— all detected inputs, live</span></label>
+      <div id="cam-list"></div>
+      <div class="cam-foot">
+        <span id="cam-count" class="hint"></span>
+        <button id="rescan" class="mini">rescan</button>
+      </div>
       <label for="aud">audio input</label>
       <select id="aud"></select>
       <button id="start">start</button>
@@ -287,6 +413,15 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script>
+    // Always fetch fresh JS. A cached app.js running against a freshly edited
+    // index.html (or vice versa) throws on the first element that no longer
+    // exists, the render loop dies, and it looks exactly like "the cameras are
+    // broken" — which it did, repeatedly. A cache-busting query removes the
+    // failure mode entirely; this is a local tool, the refetch costs nothing.
+    for (const src of ['shaders.js', 'app.js']) {
+      document.write('<script src="' + src + '?v=' + Date.now() + '"><\/script>');
+    }
+  </script>
 </body>
 </html>
