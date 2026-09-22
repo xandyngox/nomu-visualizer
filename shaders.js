@@ -956,7 +956,7 @@ void main() {
 
   vec2 local = fract(v_uv * u_grid);
   float d = min(min(local.x, local.y), min(1.0 - local.x, 1.0 - local.y));
-  float isBorder = 1.0 - step(0.06, d); // ~6% of the cell is border
+  float isBorder = 1.0 - step(0.035, d); // thinner box outline
 
   vec3 line = vec3(0.95, 0.98, 1.0);
   gl_FragColor = vec4(mix(base, line, active * isBorder * u_amount), 1.0);

@@ -763,8 +763,10 @@ let needsMaskPrime = false;
 let worldFBO = null;
 // motion detection — tiny buffers holding the downsampled camera; the
 // frame-diff between them drives the grid overlay
-const MOTION_W = 48;
-const MOTION_H = 27;
+// finer grid: the boxes this draws read as "little white squares", and they
+// were coarse enough to be a feature rather than a texture
+const MOTION_W = 64;
+const MOTION_H = 36;
 let motionCurr = null;
 let motionPrev = null;
 let fboW = 0;
@@ -2535,9 +2537,12 @@ function drawCellMarks() {
     const y = Math.max(top, r.y);
     const h = Math.min(bot, r.y + r.h) - y;
     if (h <= 4) continue;
-    const inset = 8;
+    // arms scale with the panel and cap low. on a small ACCENT panel a long
+    // arm nearly meets its neighbour and the four corners close up into a
+    // little white box instead of reading as registration marks.
+    const inset = 7;
     bracket(ctx, r.x + inset, y + inset, r.w - inset * 2, h - inset * 2,
-            Math.min(18, r.w * 0.06));
+            Math.max(4, Math.min(11, r.w * 0.045)));
 
     const id = String(r.cam + 1).padStart(2, '0');
     const kind = r.tagName || 'CAM';
@@ -2555,7 +2560,7 @@ function drawCellMarks() {
   // outer safe-area brackets — the frame that makes the whole thing read as
   // a composed shot rather than a full-bleed webcam
   ctx.strokeStyle = 'rgba(232, 238, 255, 0.22)';
-  bracket(ctx, 22, top + 22, W - 44, (bot - top) - 44, 26);
+  bracket(ctx, 22, top + 22, W - 44, (bot - top) - 44, 18);
 
   // tick rule along the bottom safe line, marked every 8th
   ctx.strokeStyle = 'rgba(232, 238, 255, 0.18)';
@@ -2573,7 +2578,7 @@ function drawCellMarks() {
   if (beat.conf > 0.25) {
     const cx = W / 2;
     const cy = (top + bot) / 2;
-    const s = 9;
+    const s = 6;
     ctx.strokeStyle = `rgba(232, 238, 255, ${(0.10 + 0.22 * (1 - beat.phase)).toFixed(3)})`;
     ctx.beginPath();
     ctx.moveTo(snap(cx - s), snap(cy)); ctx.lineTo(snap(cx + s), snap(cy));
