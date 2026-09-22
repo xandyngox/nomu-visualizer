@@ -763,10 +763,11 @@ let needsMaskPrime = false;
 let worldFBO = null;
 // motion detection — tiny buffers holding the downsampled camera; the
 // frame-diff between them drives the grid overlay
-// finer grid: the boxes this draws read as "little white squares", and they
-// were coarse enough to be a feature rather than a texture
-const MOTION_W = 64;
-const MOTION_H = 36;
+// the boxes this grid draws read as "little white squares". a fine grid keeps
+// them a texture over the image rather than a feature sitting on top of it.
+// 80x45 is exact 16:9, so the cells stay square on a 16:9 output.
+const MOTION_W = 80;
+const MOTION_H = 45;
 let motionCurr = null;
 let motionPrev = null;
 let fboW = 0;
