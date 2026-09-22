@@ -352,7 +352,14 @@ const specCanvas = document.createElement('canvas');
 specCanvas.width = 512;
 specCanvas.height = 288;
 const specCtx = specCanvas.getContext('2d');
+// created eagerly, not on first draw. sourceCount() counts the meter whenever
+// it is enabled, but sourceList() only emitted it once this texture existed —
+// so for the first frames the list was shorter than the count, panel indices
+// ran past the end, and `% sources.length` silently wrapped them onto the
+// wrong source. that is how a panel ends up labelled for one thing and showing
+// another, or showing nothing.
 let specTex = null;
+function ensureSpecTex() { if (!specTex) specTex = createVideoTex(); }
 
 function drawSpectrumPanel() {
   const W = specCanvas.width;
@@ -400,7 +407,6 @@ function drawSpectrumPanel() {
   c.fillStyle = `rgba(${rgb(palCur.bright)}, 0.35)`;
   c.fillRect(0, H - 12, W, 1);
 
-  if (!specTex) specTex = createVideoTex();
   gl.bindTexture(gl.TEXTURE_2D, specTex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, specCanvas);
 }
@@ -498,8 +504,9 @@ function pickWorldMode() {
 let worldEnabled = true;
 let worldMode = 0;
 
+const readyGifs = () => gifSources.filter(g => g.ready);
 function gifSourceCount() {
-  return gifsEnabled ? gifSources.length : 0;
+  return gifsEnabled ? readyGifs().length : 0;
 }
 function sourceCount() {
   return cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0)
@@ -537,7 +544,7 @@ function makePanel(src, role, minWidth) {
   // reads as broken, not as a crop.
   const gifLo = cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
   const graphic = src === spectrumSrcIndex() ||
-    (gifsEnabled && src >= gifLo && src < gifLo + gifSources.length);
+    (gifsEnabled && src >= gifLo && src < gifLo + gifSourceCount());
   const xLo = graphic ? 0 : -0.10, xHi = graphic ? 1 - w : 1.20 - w;
   const yLo = graphic ? 0 : -0.08, yHi = graphic ? 1 - h : 1.16 - h;
   return {
@@ -584,16 +591,47 @@ function syncPanels() {
     Math.max(panelTarget, n, MIN_PANELS),
     Math.max(MAX_PANELS, n));
 
-  for (const p of panels) if (p.src >= n) p.src = Math.floor(Math.random() * n);
+  // a source index that no longer exists gets reassigned to a CAMERA, not to
+  // a random source — picking randomly here could land on the meter or a clip
+  // that already has a panel, which is one of the ways a graphic ended up
+  // duplicated.
+  const anyCam = () => (cams.length ? Math.floor(Math.random() * cams.length) : 0);
+  for (const p of panels) if (p.src >= n) p.src = anyCam();
   while (panels.length > target) panels.pop();
+
   // guarantee coverage first
   for (let i = 0; i < n && panels.length < target; i++) {
     if (!panels.some(p => p.src === i)) {
       panels.push(makePanel(i, roleForIndex(panels.length, target)));
     }
   }
+  // fill any remaining slots with cameras rather than a random source. a
+  // second copy of the meter, or the same clip twice, is filler; a second
+  // angle on the room never is.
   while (panels.length < target) {
-    panels.push(makePanel(Math.floor(Math.random() * n), roleForIndex(panels.length, target)));
+    panels.push(makePanel(anyCam(), roleForIndex(panels.length, target)));
+  }
+
+  // --- enforce the two invariants, in order ---
+
+  // 1. no graphic source may hold more than one panel. duplicates get moved
+  //    onto a camera.
+  const count = new Map();
+  panels.forEach(p => count.set(p.src, (count.get(p.src) || 0) + 1));
+  for (const p of panels) {
+    if (p.src >= cams.length && count.get(p.src) > 1) {
+      count.set(p.src, count.get(p.src) - 1);
+      p.src = anyCam();
+      count.set(p.src, (count.get(p.src) || 0) + 1);
+    }
+  }
+
+  // 2. every source still needs a panel. take one from whichever source has
+  //    spares, so satisfying one source never orphans another.
+  for (let i = 0; i < n; i++) {
+    if (panels.some(p => p.src === i)) continue;
+    const victim = panels.find(p => panels.filter(q => q.src === p.src).length > 1);
+    if (victim) victim.src = i;
   }
 
   // re-role after any count change. the 3D world takes the hero slot when it
@@ -604,7 +642,7 @@ function syncPanels() {
   // clips and the meter are texture, not subject — neither may be the hero
   const firstGifIdx = cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
   const isGraphic = (src) => src === specIdx ||
-    (gifsEnabled && src >= firstGifIdx && src < firstGifIdx + gifSources.length);
+    (gifsEnabled && src >= firstGifIdx && src < firstGifIdx + gifSourceCount());
   const worldIdx = panels.findIndex(p => worldEnabled && p.src === cams.length);
   // the hero is the world if it is up, otherwise the first panel that is not
   // the meter — a spectrum readout should never dominate the composition
@@ -912,11 +950,12 @@ function sourceList() {
   if (worldEnabled) {
     out.push({ tex: worldFBO.tex, label: WORLD_MODES[worldMode], tag: 'GEN', world: true });
   }
-  if (spectrumEnabled && specTex) {
+  ensureSpecTex();
+  if (spectrumEnabled) {
     out.push({ tex: specTex, label: 'SPECTRUM', tag: 'SPC', flat: true });
   }
   if (gifsEnabled) {
-    gifSources.forEach((g, i) => {
+    readyGifs().forEach((g, i) => {
       out.push({ tex: g.tex, label: 'CLIP ' + (i + 1), tag: 'CLP', flat: true, gifW: g.canvas.width, gifH: g.canvas.height });
     });
   }
@@ -2701,6 +2740,10 @@ function initGifSources() {
       canvas,
       ctx: canvas.getContext('2d'),
       tex: createVideoTex(),
+      // these are multi-megabyte GIFs. a slot is not offered as a source until
+      // it has actually painted a frame, otherwise it shows up as a black
+      // panel with a label on it for the first seconds of a set.
+      ready: false,
     });
   }
 }
@@ -2710,7 +2753,9 @@ function initGifSources() {
 function cycleGifSource() {
   if (!gifSources.length) return;
   const g = gifSources[Math.floor(Math.random() * gifSources.length)];
-  g.img = gifPreload[Math.floor(Math.random() * gifPreload.length)];
+  const loaded = gifPreload.filter(im => im.complete && im.naturalWidth);
+  if (!loaded.length) return;
+  g.img = loaded[Math.floor(Math.random() * loaded.length)];
 }
 
 // draw the GIF's current frame into its canvas and upload. drawImage on an
@@ -2732,6 +2777,7 @@ function updateGifSources() {
     ctx.drawImage(g.img, dx, dy, dw, dh);
     gl.bindTexture(gl.TEXTURE_2D, g.tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    g.ready = true;
   }
 }
 
