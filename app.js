@@ -498,8 +498,12 @@ function pickWorldMode() {
 let worldEnabled = true;
 let worldMode = 0;
 
+function gifSourceCount() {
+  return gifsEnabled ? gifSources.length : 0;
+}
 function sourceCount() {
-  return cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
+  return cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0)
+       + gifSourceCount();
 }
 // index of the spectrum source, or -1 — it is always last
 const spectrumSrcIndex = () =>
@@ -531,7 +535,9 @@ function makePanel(src, role, minWidth) {
   // camera and world panels may hang off the frame edge — a cropped shot reads
   // as composed. the meter may not: a bar chart with its left third missing
   // reads as broken, not as a crop.
-  const graphic = src === spectrumSrcIndex();
+  const gifLo = cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
+  const graphic = src === spectrumSrcIndex() ||
+    (gifsEnabled && src >= gifLo && src < gifLo + gifSources.length);
   const xLo = graphic ? 0 : -0.10, xHi = graphic ? 1 - w : 1.20 - w;
   const yLo = graphic ? 0 : -0.08, yHi = graphic ? 1 - h : 1.16 - h;
   return {
@@ -595,10 +601,14 @@ function syncPanels() {
   // same patch of noise. otherwise the first panel is the hero. either way
   // there is exactly one.
   const specIdx = spectrumSrcIndex();
-  const worldIdx = panels.findIndex(p => worldEnabled && p.src >= cams.length && p.src !== specIdx);
+  // clips and the meter are texture, not subject — neither may be the hero
+  const firstGifIdx = cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
+  const isGraphic = (src) => src === specIdx ||
+    (gifsEnabled && src >= firstGifIdx && src < firstGifIdx + gifSources.length);
+  const worldIdx = panels.findIndex(p => worldEnabled && p.src === cams.length);
   // the hero is the world if it is up, otherwise the first panel that is not
   // the meter — a spectrum readout should never dominate the composition
-  let heroIdx = worldIdx >= 0 ? worldIdx : panels.findIndex(p => p.src !== specIdx);
+  let heroIdx = worldIdx >= 0 ? worldIdx : panels.findIndex(p => !isGraphic(p.src));
   if (heroIdx < 0) heroIdx = 0;
   let sub = 0;
   panels.forEach((p, i) => {
@@ -609,7 +619,7 @@ function syncPanels() {
     // a crowd of mid-sized frames is clutter, a crowd of small ones against
     // one hero is still a composition.
     if (i === heroIdx) want = 'HERO';
-    else if (p.src === specIdx) want = 'ACCENT';
+    else if (isGraphic(p.src)) want = 'ACCENT';
     else if (panels.length <= 2) want = 'MID';
     else if (panels.length <= 5) want = (sub++ % 2 === 0) ? 'MID' : 'ACCENT';
     else want = (sub++ % 3 === 0) ? 'MID' : 'ACCENT';
@@ -905,6 +915,11 @@ function sourceList() {
   if (spectrumEnabled && specTex) {
     out.push({ tex: specTex, label: 'SPECTRUM', tag: 'SPC', flat: true });
   }
+  if (gifsEnabled) {
+    gifSources.forEach((g, i) => {
+      out.push({ tex: g.tex, label: 'CLIP ' + (i + 1), tag: 'CLP', flat: true, gifW: g.canvas.width, gifH: g.canvas.height });
+    });
+  }
   return out;
 }
 
@@ -974,8 +989,9 @@ function compositeCameras() {
       worldRect = { x: cx, y: cy, w: cw, h: ch };
     } else if (src.flat) {
       // a graphic, not a camera — keep its own aspect and never mirror it,
-      // or the bars would run right-to-left
-      gl.uniform2f(PROG.cell.u.u_video, specCanvas.width, specCanvas.height);
+      // or the spectrum's bars would run right-to-left
+      gl.uniform2f(PROG.cell.u.u_video,
+                   src.gifW || specCanvas.width, src.gifH || specCanvas.height);
       gl.uniform1f(PROG.cell.u.u_mirror, 0);
     } else {
       const v = cams[srcIdx % cams.length].video;
@@ -1519,33 +1535,6 @@ function updatePaletteLerp() {
   }
   // the overlay filter is an SVG attribute write, which is far too expensive
   // to do every frame — only rewrite it while the palette is actually moving
-  if (drift > 0.004) updateOverlayPalette();
-}
-
-// sample the live palette ramp into the SVG transfer tables used by the GIF
-// and clip tiles, so overlay footage is graded by the same curve as the camera
-const gifR = tag('gifR');
-const gifG = tag('gifG');
-const gifB = tag('gifB');
-
-function rampAt(t) {
-  const { dark, mid, bright } = palCur;
-  return t < 0.5
-    ? [0, 1, 2].map(i => dark[i] + (mid[i] - dark[i]) * (t * 2))
-    : [0, 1, 2].map(i => mid[i] + (bright[i] - mid[i]) * ((t - 0.5) * 2));
-}
-
-function updateOverlayPalette() {
-  if (!gifR) return;
-  // straight ramp, no lift. multiplying the stops up was pushing the top of
-  // the curve past white, which clips the highlights to flat blocks of colour
-  // — overlays are separated from the camera by tile opacity and the border,
-  // not by being brighter than it.
-  const stops = [0, 0.25, 0.5, 0.75, 1].map(rampAt);
-  const fmt = (i) => stops.map(s => Math.min(1, Math.max(0, s[i])).toFixed(3)).join(' ');
-  gifR.setAttribute('tableValues', fmt(0));
-  gifG.setAttribute('tableValues', fmt(1));
-  gifB.setAttribute('tableValues', fmt(2));
 }
 
 // ---------- scenes ----------
@@ -1974,6 +1963,7 @@ function loop() {
   updatePanels(dt);
   uploadCameras();
   renderWorld(now);
+  updateGifSources();
   if (spectrumEnabled) drawSpectrumPanel();
   compositeCameras();
   analyzeFrame();
@@ -2341,7 +2331,7 @@ window.addEventListener('keydown', (e) => {
   } else if (k === 'h') {
     // null-safe: a layer that has been removed from the markup must not throw
     // and kill the loop
-    ['hud', 'text-overlay', 'code-lines', 'gif-layer']
+    ['hud', 'text-overlay', 'code-lines']
       .forEach(id => { const el = tag(id); if (el) el.classList.toggle('hidden'); });
   } else if (k === 'i') {
     // HUD only — the technical readouts go, the artwork stays. `h` strips
@@ -2680,9 +2670,17 @@ function pickEdgeSpot(w, h, maxOverlap) {
   return best;
 }
 
-const gifLayer = tag('gif-layer');
-const activeGifs = [];
-const MAX_GIFS = 2;
+// ---------- GIF sources ----------
+//
+// these used to be DOM tiles floating above the canvas, which is why they
+// looked flat and needed a drawn-on border to read as anything: sitting above
+// the GL canvas they never touched the effect chain. They are sources now, so
+// they go through the composite like a camera and pick up the trails, the
+// bloom, the palette and the registration brackets for free.
+
+const GIF_SOURCES = 2;
+/** @type {{img:HTMLImageElement, canvas:HTMLCanvasElement, ctx:CanvasRenderingContext2D, tex:WebGLTexture}[]} */
+const gifSources = [];
 
 // warm the cache up front — these are multi-megabyte GIFs and decoding one
 // mid-set for the first time drops frames
@@ -2692,149 +2690,49 @@ const gifPreload = GIF_FILES.map(f => {
   return im;
 });
 
-// a rectangle with a few bites taken out of its edges, as a CSS polygon.
-// randomised per tile so no two tiles share a silhouette.
-function glitchClip() {
-  const pts = [];
-  const notch = () => 3 + Math.random() * 7;          // depth, in %
-  const push = (x, y) => pts.push(`${x.toFixed(1)}% ${y.toFixed(1)}%`);
-  push(0, 0);
-  if (Math.random() < 0.7) {                           // top edge bite
-    const a = 20 + Math.random() * 40, d = notch();
-    push(a, 0); push(a, d); push(a + 8 + Math.random() * 12, d);
-    push(a + 8 + Math.random() * 12, 0);
-  }
-  push(100, 0);
-  if (Math.random() < 0.6) {                           // right edge bite
-    const a = 25 + Math.random() * 40, d = notch();
-    push(100, a); push(100 - d, a); push(100 - d, a + 10 + Math.random() * 14);
-    push(100, a + 10 + Math.random() * 14);
-  }
-  push(100, 100);
-  if (Math.random() < 0.7) {                           // bottom edge bite
-    const a = 55 + Math.random() * 30, d = notch();
-    push(a, 100); push(a, 100 - d); push(a - 8 - Math.random() * 12, 100 - d);
-    push(a - 8 - Math.random() * 12, 100);
-  }
-  push(0, 100);
-  return `polygon(${pts.join(', ')})`;
-}
-
-// two short bars at one corner — a registration tick, not a picture frame
-function addCornerTicks(host, w, h) {
-  const len = Math.max(6, Math.min(18, w * 0.16));
-  const corners = [[0, 0, 1, 1], [w, 0, -1, 1], [0, h, 1, -1], [w, h, -1, -1]];
-  const [cx, cy, sx, sy] = corners[Math.floor(Math.random() * corners.length)];
-  const mk = (x, y, ww, hh) => {
-    const t = document.createElement('div');
-    t.className = 'gif-tick';
-    t.style.cssText = `left:${x}px;top:${y}px;width:${ww}px;height:${hh}px;`;
-    host.appendChild(t);
-  };
-  mk(sx > 0 ? cx : cx - len, sy > 0 ? cy : cy - 1, len, 1);
-  mk(sx > 0 ? cx : cx - 1, sy > 0 ? cy : cy - len, 1, len);
-}
-
-function spawnGifTile(opts) {
-  opts = opts || {};
-  const W = window.innerWidth;
-  const H = window.innerHeight;
-  const bar = letterbox * H;
-  // snapped to the same 12x8 grid as everything else. free placement is what
-  // made these read as scattered stickers rather than part of a composition.
-  // continuous sizes, a touch smaller than the old 2-4 grid spans, with the
-  // aspect chosen independently so no two tiles share a shape
-  const fw = 0.10 + Math.random() * 0.15;
-  const fh = Math.max(0.06, Math.min(0.28, fw * (0.45 + Math.random() * 1.1)));
-  const spot = pickEdgeSpot(fw, fh, 0.25);
-
-  const targetOp = 0.26 + Math.random() * 0.20;
-  const lifespan = opts.lifespan ?? (1000 + Math.random() * 3000);
-  const flicker = opts.flicker ?? true;
-
-  let entryFrame = null;
-  const el = document.createElement('div');
-  el.className = 'gif-tile';
-  el.style.left = Math.round(spot.x * W) + 'px';
-  el.style.top = Math.round(bar + spot.y * (H - bar * 2)) + 'px';
-  el.style.width = Math.round(fw * W) + 'px';
-  el.style.height = Math.round(fh * (H - bar * 2)) + 'px';
-  el.style.opacity = targetOp.toFixed(2);
-
-  const img = document.createElement('img');
-  img.src = gifPreload[Math.floor(Math.random() * gifPreload.length)].src;
-  img.decoding = 'async';
-  el.appendChild(img);
-  el.style.clipPath = glitchClip();
-  gifLayer.appendChild(el);
-
-  // the frame: two outlines with different notches, a few pixels apart
-  const pw = Math.round(fw * W);
-  const ph = Math.round(fh * (H - bar * 2));
-  const ox = Math.round(el.offsetLeft), oy = Math.round(el.offsetTop);
-  const frame = document.createElement('div');
-  frame.style.cssText =
-    `position:absolute;left:${ox}px;top:${oy}px;width:${pw}px;height:${ph}px;` +
-    `opacity:${targetOp.toFixed(2)};pointer-events:none;`;
-  const edge = document.createElement('div');
-  edge.className = 'gif-edge';
-  edge.style.cssText = 'inset:0;';
-  edge.style.clipPath = glitchClip();
-  const ghost = document.createElement('div');
-  ghost.className = 'gif-edge ghost';
-  const gx = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 5);
-  const gy = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 4);
-  ghost.style.cssText = `left:${gx.toFixed(0)}px;top:${gy.toFixed(0)}px;right:${(-gx).toFixed(0)}px;bottom:${(-gy).toFixed(0)}px;`;
-  ghost.style.clipPath = glitchClip();
-  frame.append(ghost, edge);
-  addCornerTicks(frame, pw, ph);
-  gifLayer.appendChild(frame);
-  entryFrame = frame;
-
-  const entry = { el, frame: entryFrame, dead: false, targetOp, isFlash: !!opts.flash };
-  activeGifs.push(entry);
-
-  let flickerId = null;
-  if (flicker) {
-    flickerId = setInterval(() => {
-      if (entry.dead) return;
-      if (Math.random() < 0.12) {
-        el.style.opacity = '0';
-        setTimeout(() => {
-          if (!entry.dead) el.style.opacity = entry.targetOp.toFixed(2);
-        }, 40 + Math.random() * 80);
-      }
-    }, 180);
-  }
-
-  setTimeout(() => {
-    entry.dead = true;
-    if (flickerId) clearInterval(flickerId);
-    el.remove();
-    if (entry.frame) entry.frame.remove();
-    const idx = activeGifs.indexOf(entry);
-    if (idx >= 0) activeGifs.splice(idx, 1);
-  }, lifespan);
-}
-
-// burst = one held tile plus a couple of rapid flashes
-function spawnGifBurst() {
-  spawnGifTile();
-  for (let i = 0; i < 1; i++) {
-    setTimeout(() => {
-      spawnGifTile({ lifespan: 60 + Math.random() * 140, flicker: false, flash: true });
-    }, i * (25 + Math.random() * 60));
+function initGifSources() {
+  if (gifSources.length) return;
+  for (let i = 0; i < GIF_SOURCES; i++) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 180;
+    gifSources.push({
+      img: gifPreload[Math.floor(Math.random() * gifPreload.length)],
+      canvas,
+      ctx: canvas.getContext('2d'),
+      tex: createVideoTex(),
+    });
   }
 }
 
-function gifSpawnerTick() {
-  if (!running) return;
-  if (gifsEnabled) {
-    const livingMain = activeGifs.filter(g => !g.dead && !g.isFlash).length;
-    if (livingMain < 1 && Math.random() < 0.5) spawnGifBurst();
-    else if (livingMain < MAX_GIFS && Math.random() < 0.15) spawnGifBurst();
+// swap which clip a slot is showing. called on bar lines so the change lands
+// musically rather than on a wall-clock timer.
+function cycleGifSource() {
+  if (!gifSources.length) return;
+  const g = gifSources[Math.floor(Math.random() * gifSources.length)];
+  g.img = gifPreload[Math.floor(Math.random() * gifPreload.length)];
+}
+
+// draw the GIF's current frame into its canvas and upload. drawImage on an
+// animated <img> grabs whatever frame the browser is displaying, so the
+// animation carries through without decoding anything ourselves.
+function updateGifSources() {
+  if (!gifsEnabled) return;
+  for (const g of gifSources) {
+    if (!g.img.complete || !g.img.naturalWidth) continue;
+    const { canvas, ctx } = g;
+    // cover-fit, so a clip never letterboxes itself inside its own panel
+    const ca = canvas.width / canvas.height;
+    const ia = g.img.naturalWidth / g.img.naturalHeight;
+    let dw = canvas.width, dh = canvas.height, dx = 0, dy = 0;
+    if (ia > ca) { dw = canvas.height * ia; dx = (canvas.width - dw) / 2; }
+    else         { dh = canvas.width / ia;  dy = (canvas.height - dh) / 2; }
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(g.img, dx, dy, dw, dh);
+    gl.bindTexture(gl.TEXTURE_2D, g.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
   }
-  setTimeout(gifSpawnerTick, 300 + Math.random() * 900);
 }
 
 // ---------- waveform — scrolling recording-style ----------
@@ -2904,17 +2802,6 @@ function updateTextFilter() {
 updateTextFilter();
 
 // the GIF layer's exposure boost is a live-updated SVG filter matrix
-const gifBrightMatrix = tag('gif-bright-matrix');
-// 1.0, not 1.1 — the ramp already lands where it should, and scaling it up
-// only clips the top stop
-const GIF_BRIGHT_BASE = 1.0;
-function updateExposureFilters() {
-  if (!gifBrightMatrix) return;
-  const b = (GIF_BRIGHT_BASE * exposure).toFixed(3);
-  gifBrightMatrix.setAttribute('values',
-    `${b} 0 0 0 0  0 ${b} 0 0 0  0 0 ${b} 0 0  0 0 0 1 0`);
-}
-
 // ---------- big text ----------
 
 const bigText = tag('big-text');
@@ -3221,7 +3108,7 @@ function updateCodeLines() {
 
 let readoutTimer = null;
 function startOverlayTimers() {
-  gifSpawnerTick();
+  initGifSources();
   blotchSpawnerTick();
   pickLayerPhase();
   if (readoutTimer) clearInterval(readoutTimer);
@@ -3246,8 +3133,6 @@ function startOverlayTimers() {
 loadSettings();
 updateLetterbox();
 renderScale = SCALE_STEPS[scaleIdx];
-updateExposureFilters();
-updateOverlayPalette();
 refreshTags();
 setScene(0);
 setRig(0);

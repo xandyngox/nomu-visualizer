@@ -245,7 +245,7 @@ run at zero strength.
 | `index.html` | markup, styles, SVG filters for the DOM overlays |
 | `shaders.js` | all GLSL |
 | `app.js` | everything else |
-| `nomu_gifs/` | the floating GIF tiles |
+| `nomu_gifs/` | clips, sampled into panel sources |
 
 ## Layer order
 
@@ -269,9 +269,12 @@ arm lengths, and not every corner is drawn. Four identical L's on every panel
 reads as a template. The style is derived from a per-panel seed rather than
 rolled per frame, which would strobe — `u` toggles the layer.
 
-GIF tiles are a notched shape (a rectangle with a few bites out of its edges)
-with a second, differently-notched outline offset a few pixels behind it, plus
-a pair of corner ticks. A plain 1px rectangle read as a stock thumbnail.
+GIF clips are panel sources, not an overlay. They used to be DOM tiles floating
+above the canvas, which is why they looked flat and needed a drawn-on border to
+read as anything — sitting above the GL canvas they never touched the effect
+chain. As sources they go through the composite like a camera and pick up the
+feedback trails, the bloom, the palette and the registration brackets for free.
+They are never the hero and never hang off the frame edge.
 
 ## Things that are deliberately not here
 

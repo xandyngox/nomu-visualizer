@@ -225,46 +225,6 @@
       white-space: nowrap;
       overflow: hidden;
     }
-    #gif-layer {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 4;
-      /* luma -> palette ramp, then lighten so tiles add light over the
-         cameras rather than punching holes in them */
-      mix-blend-mode: lighten;
-      opacity: 0.85;
-      filter: url(#gif-palette);
-    }
-    /* a plain 1px rectangle read as a stock thumbnail. the tile is now a
-       notched shape (clip-path set per tile from JS) with a second, offset,
-       differently-notched outline behind it — a mis-registered frame, the way
-       a bad decode lands two copies of an edge a few pixels apart. */
-    .gif-tile {
-      position: absolute;
-      overflow: hidden;
-    }
-    .gif-edge {
-      position: absolute;
-      pointer-events: none;
-      border: 1px solid rgba(232, 238, 255, 0.5);
-    }
-    .gif-edge.ghost {
-      border-color: rgba(150, 190, 255, 0.28);
-    }
-    /* corner ticks, drawn as two thin bars rather than a full border, so the
-       frame reads as registration marks rather than as a picture frame */
-    .gif-tick {
-      position: absolute;
-      background: rgba(232, 238, 255, 0.75);
-      pointer-events: none;
-    }
-    .gif-tile img {
-      width: 100%;
-      height: 100%;
-      object-fit: fill; /* intentional stretch to tile aspect */
-      display: block;
-    }
     /* registration marks, cell brackets, tick rules — sits above the GIF/clip
        tiles so the frame always reads as one composed image */
     /* NOT `lighten` like the other overlays. these are near-white hairlines at
@@ -348,44 +308,10 @@
       <!-- gif gradient map: luma → navy → purple-blue → pale blue → white.
            matches the webcam's palette shader. heavier blur + 4-level crush
            reads as pixelated. done in one filter to avoid CSS chain cost. -->
-      <filter id="gif-palette" color-interpolation-filters="sRGB">
-        <!-- grayscale -->
-        <feColorMatrix type="matrix" values="
-          0.33 0.33 0.33 0 0
-          0.33 0.33 0.33 0 0
-          0.33 0.33 0.33 0 0
-          0    0    0    1 0"/>
-        <!-- luma -> palette ramp. these tables are rewritten from JS whenever
-             the active palette changes, so GIF and clip tiles are graded by
-             the same ramp as the camera instead of a baked-in blue. -->
-        <feComponentTransfer>
-          <feFuncR id="gifR" type="table" tableValues="0.05 0.12 0.50 0.88 1.00"/>
-          <feFuncG id="gifG" type="table" tableValues="0.08 0.22 0.58 0.92 1.00"/>
-          <feFuncB id="gifB" type="table" tableValues="0.25 0.75 0.96 1.00 1.00"/>
-        </feComponentTransfer>
-        <!-- exposure, tracked from JS. stays at 1.0 by default — anything
-             above that pushes the ramp's top stop past white and posterises
-             the highlights for free, which is what "cooked" looks like. -->
-        <feColorMatrix id="gif-bright-matrix" type="matrix" values="
-          1 0 0 0 0
-          0 1 0 0 0
-          0 0 1 0 0
-          0 0 0 1 0"/>
-        <!-- deliberately nothing after this point.
-             there used to be a 1.6px blur and a 4-level discrete posterize
-             here. the posterize is the problem: the ramp above is a smooth
-             5-stop curve, and quantising its output to 0/0.33/0.66/1 throws
-             that away and replaces it with four hard bands — so the tiles came
-             out saturated and cooked instead of sharing the camera's grading.
-             these tiles are DOM, above the GL canvas, so the film pass never
-             reaches them — whatever this filter does is final. it should do
-             one job: map luma onto the current palette ramp, cleanly. -->
-      </filter>
     </defs>
   </svg>
 
   <div id="code-lines"></div>
-  <div id="gif-layer"></div>
   <canvas id="marks-canvas"></canvas>
 
   <div id="text-overlay">
