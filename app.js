@@ -436,7 +436,11 @@ function drawSpectrumPanel() {
 // pass keeps max(current, previous * decay), so anything that moves smears.
 
 const MIN_PANELS = 3;
-const MAX_PANELS = 10;
+const MAX_PANELS = 15;
+// the room is the subject, so there is always a floor of camera frames
+// regardless of how many generated sources are up. with one physical camera
+// these are different crops and positions of the same feed, which is the point.
+const MIN_CAM_PANELS = 3;
 
 // each preset is a different density and temperament, not a different grid
 // every panel set gets a deliberate size hierarchy rather than a row of
@@ -454,18 +458,24 @@ const ROLES = {
 // frames on screen varies over a set instead of being a constant per preset.
 // `scale` shifts the whole set bigger or smaller while keeping the hierarchy.
 const SCATTER = [
-  { name: 'DRIFT', count: [3, 5],  scale: 1.00, speed: 0.012, jump: 0.10 },
-  { name: 'SWARM', count: [5, 8],  scale: 0.86, speed: 0.024, jump: 0.28 },
-  { name: 'SLAB',  count: [3, 4],  scale: 1.15, speed: 0.007, jump: 0.06 },
-  { name: 'SHARD', count: [6, 10], scale: 0.72, speed: 0.032, jump: 0.40 },
+  { name: 'DRIFT', count: [3, 6],   scale: 1.00, speed: 0.012, jump: 0.10 },
+  { name: 'SWARM', count: [5, 10],  scale: 0.86, speed: 0.024, jump: 0.28 },
+  { name: 'SLAB',  count: [3, 5],   scale: 1.15, speed: 0.007, jump: 0.06 },
+  { name: 'SHARD', count: [7, 15],  scale: 0.66, speed: 0.032, jump: 0.40 },
 ];
 
 // the live target, re-rolled on preset change rather than every frame —
 // syncPanels runs per frame and would otherwise thrash the set continuously
 let panelTarget = 3;
+// the roll stays random, but loud passages skew it toward the top of the
+// preset's range. raising a uniform roll to a power below 1 bends the
+// distribution upward without ever pinning it — a quiet bar can still come up
+// busy, and a loud one can still come up sparse.
 function rollPanelTarget() {
   const [lo, hi] = scatter().count;
-  panelTarget = lo + Math.floor(Math.random() * (hi - lo + 1));
+  const energy = Math.min(1, crushSmooth);
+  const biased = Math.pow(Math.random(), 1 / (0.6 + energy * 1.7));
+  panelTarget = Math.round(lo + biased * (hi - lo));
 }
 
 // exactly one hero, then alternate mids and accents so there is always
@@ -585,10 +595,13 @@ function reseatPanel(p) {
 function syncPanels() {
   const n = sourceCount();
   if (n === 0) { panels.length = 0; return; }
-  // never fewer than MIN_PANELS, never fewer than the number of sources, and
-  // never more than MAX_PANELS unless there are simply that many sources
+  // the generated sources (world, meter, clips) each take exactly one panel,
+  // so the target has to leave room for the camera floor on top of them —
+  // otherwise adding a clip would silently push a camera frame off screen.
+  const graphics = n - cams.length;
+  const camFloor = cams.length ? Math.min(MIN_CAM_PANELS, MAX_PANELS - graphics) : 0;
   const target = Math.min(
-    Math.max(panelTarget, n, MIN_PANELS),
+    Math.max(panelTarget, n, MIN_PANELS, graphics + camFloor),
     Math.max(MAX_PANELS, n));
 
   // a source index that no longer exists gets reassigned to a CAMERA, not to
@@ -632,6 +645,32 @@ function syncPanels() {
     if (panels.some(p => p.src === i)) continue;
     const victim = panels.find(p => panels.filter(q => q.src === p.src).length > 1);
     if (victim) victim.src = i;
+  }
+
+  // 3. the camera floor. if generated sources have crowded cameras out, move
+  //    the surplus back — a graphic that already has its one panel is the
+  //    thing that gives way, never the room.
+  if (cams.length) {
+    const want = Math.min(MIN_CAM_PANELS, panels.length - graphics);
+    let have = panels.filter(p => p.src < cams.length).length;
+    for (const p of panels) {
+      if (have >= want) break;
+      const isDupGraphic = p.src >= cams.length &&
+        panels.filter(q => q.src === p.src).length > 1;
+      if (isDupGraphic) { p.src = anyCam(); have++; }
+    }
+    // still short: give up a graphic's only panel, lowest priority first —
+    // clips go before the meter, and the world is never dropped because it
+    // holds the hero slot.
+    const gifLo = cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
+    const priority = [];
+    for (let i = gifSourceCount() - 1; i >= 0; i--) priority.push(gifLo + i);
+    if (spectrumEnabled) priority.push(spectrumSrcIndex());
+    for (const gi of priority) {
+      if (have >= want) break;
+      const idx = panels.findIndex(p => p.src === gi);
+      if (idx >= 0) { panels[idx].src = anyCam(); have++; }
+    }
   }
 
   // re-role after any count change. the 3D world takes the hero slot when it
@@ -751,6 +790,9 @@ function setLayout(name) {
 const layoutsFor = () => SCATTER.map(s => s.name);
 
 function pickLayout() {
+  // setLayout re-rolls the panel count, so the number of frames changes on
+  // this cadence too — and because the roll is energy-biased, a loud section
+  // naturally fills the screen while a quiet one thins it out
   setLayout(SCATTER[Math.floor(Math.random() * SCATTER.length)].name);
 }
 
@@ -1754,7 +1796,7 @@ function updateScheduler() {
   const bar = beat.barIndex;
   if (bar >= sched.nextScene) {
     if (autoScene) pickScene();
-    sched.nextScene = bar + pick([2, 2, 4, 4, 4, 8]);
+    sched.nextScene = bar + pick([2, 3, 3, 4, 4, 6]);
   }
   if (bar >= sched.nextRig) {
     if (autoRig) pickRig();
@@ -1774,7 +1816,9 @@ function updateScheduler() {
     if (autoLayout && sourceCount() > 1) pickLayout();
     // slower than the scene axis — re-cutting the camera grid every couple of
     // bars is disorienting rather than dynamic
-    sched.nextCamLayout = bar + pick([4, 8, 8, 16]);
+    // ~5s at 150bpm is about 3 bars. kept as a spread so it still breathes
+    // rather than ticking like a metronome.
+    sched.nextCamLayout = bar + pick([2, 3, 3, 4]);
   }
   // ASCII comes in for a few bars at a time, then clears out. it is a strong
   // look, so it works as punctuation rather than as a constant.
@@ -1803,7 +1847,7 @@ function updateScheduler() {
       updateCamTag();
       updateFxTags();
     }
-    sched.nextWorld = bar + pick([4, 6, 8, 12]);
+    sched.nextWorld = bar + pick([3, 4, 5, 8]);
   }
 
   // occasional single-bar negative flash on a downbeat

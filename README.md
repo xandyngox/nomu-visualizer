@@ -96,13 +96,22 @@ colder rather than as a different piece. The auto-picker is weighted toward
 Changes crossfade over about a second rather than cutting.
 
 **Panels** (`l`) — no grid. Sources land in irregular overlapping rectangles
-that drift, jump on the beat and trail. Between 3 and 10 on screen at once,
+that drift, jump on the beat and trail. Between 3 and 15 on screen at once,
 and no single panel may exceed 60% of the frame in either axis.
 
-The count is a range per preset, re-rolled on every preset change, so the
-number of frames varies across a set rather than being a constant. Every source
-is always guaranteed a panel, so the floor rises if you are running more
-cameras than the preset asked for.
+**At least 3 of them are always cameras.** With one physical camera those are
+different crops and positions of the same feed, which is the point — the room
+is the subject. Generated sources each take exactly one panel, and if they
+crowd the cameras out, a clip gives up its panel before a camera does.
+
+The count is a range per preset, re-rolled on every preset change. The roll is
+biased by audio energy: loud passages skew toward the top of the range and
+quiet ones toward the bottom, without ever pinning either end. Measured on the
+widest preset, the mean count runs about 9.9 when quiet and 12.6 when loud, and
+a quiet bar can still come up busy.
+
+Composition changes land roughly every 3-6 seconds at 150bpm — panel preset
+and count together, since a preset change re-rolls the count.
 
 Every set has a deliberate size hierarchy rather than a row of similar
 rectangles: exactly one **HERO** carrying the composition, then **MID**s and
@@ -115,7 +124,7 @@ Past five panels the mix tilts toward accents — a crowd of mid-sized frames is
 clutter, a crowd of small ones against one hero is still a composition.
 
 Presets shift the whole set bigger or smaller while keeping the hierarchy:
-`DRIFT` (3-5, slow), `SWARM` (5-8), `SLAB` (3-4 large), `SHARD` (6-10 small,
+`DRIFT` (3-6, slow), `SWARM` (5-10), `SLAB` (3-5 large), `SHARD` (7-15 small,
 fast).
 
 **Worlds** (`w` on/off, `W` next) — raymarched 3D that takes a panel alongside
