@@ -232,20 +232,6 @@
       object-fit: fill; /* intentional stretch to tile aspect */
       display: block;
     }
-    /* anchored to the lower third instead of dead centre. a 33vh band across
-       the middle at 0.55 sat exactly where the performer is and was one of
-       the biggest things hiding them. */
-    #wave-canvas {
-      position: fixed;
-      left: 0;
-      bottom: 4vh;
-      width: 100%;
-      height: 16vh;
-      z-index: 4;
-      pointer-events: none;
-      opacity: 0.32;
-      filter: url(#vhs-text-filter);
-    }
     /* registration marks, cell brackets, tick rules — sits above the GIF/clip
        tiles so the frame always reads as one composed image */
     #marks-canvas {
@@ -362,7 +348,6 @@
 
   <div id="code-lines"></div>
   <div id="gif-layer"></div>
-  <canvas id="wave-canvas"></canvas>
   <canvas id="marks-canvas"></canvas>
 
   <div id="text-overlay">

@@ -340,6 +340,71 @@ function createVideoTex() {
   return t;
 }
 
+// ---------- spectrum panel ----------
+//
+// the meter used to be a fixed DOM strip pinned across the bottom of the
+// frame, which sat outside the composition and never moved. it is now a
+// source like any camera, so it lands in a panel with the same hairline
+// border and corner label as everything else.
+
+let spectrumEnabled = true;
+const specCanvas = document.createElement('canvas');
+specCanvas.width = 512;
+specCanvas.height = 288;
+const specCtx = specCanvas.getContext('2d');
+let specTex = null;
+
+function drawSpectrumPanel() {
+  const W = specCanvas.width;
+  const H = specCanvas.height;
+  const c = specCtx;
+  c.fillStyle = '#000';
+  c.fillRect(0, 0, W, H);
+
+  const to255 = (x) => Math.round(Math.min(1, Math.max(0, x)) * 255);
+  const rgb = (v) => `${to255(v[0])}, ${to255(v[1])}, ${to255(v[2])}`;
+
+  // scrolling peak history behind the bars, as a filled mirror
+  c.fillStyle = `rgba(${rgb(palCur.mid)}, 0.5)`;
+  c.beginPath();
+  const mid = H * 0.5;
+  for (let i = 0; i < WAVE_HISTORY_LEN; i++) {
+    const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
+    const x = (i / (WAVE_HISTORY_LEN - 1)) * W;
+    const y = mid - waveHistory[idx] * mid * 0.85 * waveGain;
+    i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+  }
+  for (let i = WAVE_HISTORY_LEN - 1; i >= 0; i--) {
+    const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
+    const x = (i / (WAVE_HISTORY_LEN - 1)) * W;
+    c.lineTo(x, mid + waveHistory[idx] * mid * 0.85 * waveGain);
+  }
+  c.closePath();
+  c.fill();
+
+  // bars, drawn from the baseline up
+  const gap = 2;
+  const bw = (W - gap * (SPEC_BANDS + 1)) / SPEC_BANDS;
+  for (let i = 0; i < SPEC_BANDS; i++) {
+    const v = Math.min(1, spec[i]);
+    const h = Math.max(1, v * (H - 24));
+    const x = gap + i * (bw + gap);
+    c.fillStyle = `rgba(${rgb(palCur.bright)}, ${(0.35 + v * 0.6).toFixed(2)})`;
+    c.fillRect(x, H - 12 - h, bw, h);
+    // cap: a bright tick riding the top of each bar
+    c.fillStyle = `rgba(${rgb(palCur.bright)}, 0.95)`;
+    c.fillRect(x, H - 12 - h - 2, bw, 2);
+  }
+
+  // baseline rule
+  c.fillStyle = `rgba(${rgb(palCur.bright)}, 0.35)`;
+  c.fillRect(0, H - 12, W, 1);
+
+  if (!specTex) specTex = createVideoTex();
+  gl.bindTexture(gl.TEXTURE_2D, specTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, specCanvas);
+}
+
 // ---------- camera layouts ----------
 //
 // every open camera is on screen at all times — the composite is the
@@ -422,8 +487,11 @@ let worldEnabled = true;
 let worldMode = 0;
 
 function sourceCount() {
-  return cams.length + (worldEnabled ? 1 : 0);
+  return cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
 }
+// index of the spectrum source, or -1 — it is always last
+const spectrumSrcIndex = () =>
+  spectrumEnabled ? cams.length + (worldEnabled ? 1 : 0) : -1;
 
 /** @type {{src:number,x:number,y:number,w:number,h:number,vx:number,vy:number}[]} */
 const panels = [];
@@ -448,13 +516,22 @@ function makePanel(src, role, minWidth) {
                                    : (0.6 + Math.random() * 1.1);
   const h = Math.max(0.13, Math.min(MAX_SPAN, w * aspect));
   const ang = Math.random() * Math.PI * 2;
+  // camera and world panels may hang off the frame edge — a cropped shot reads
+  // as composed. the meter may not: a bar chart with its left third missing
+  // reads as broken, not as a crop.
+  const graphic = src === spectrumSrcIndex();
+  const xLo = graphic ? 0 : -0.10, xHi = graphic ? 1 - w : 1.20 - w;
+  const yLo = graphic ? 0 : -0.08, yHi = graphic ? 1 - h : 1.16 - h;
   return {
     src,
+    graphic,
     role: role || 'MID',
+    // placeholder — syncPanels owns the real assignment, by index
+    band: 0,
     // allowed to hang off the frame edge — a panel cropped by the frame looks
     // composed, a panel politely inside it looks like a thumbnail
-    x: -0.10 + Math.random() * (1.20 - w),
-    y: -0.08 + Math.random() * (1.16 - h),
+    x: xLo + Math.random() * Math.max(0, xHi - xLo),
+    y: yLo + Math.random() * Math.max(0, yHi - yLo),
     w, h,
     vx: Math.cos(ang) * m.speed,
     vy: Math.sin(ang) * m.speed * 0.7,
@@ -489,12 +566,17 @@ function syncPanels() {
   // is on — it is a scene, and at thumbnail size every world looks like the
   // same patch of noise. otherwise the first panel is the hero. either way
   // there is exactly one.
-  const worldIdx = panels.findIndex(p => worldEnabled && p.src >= cams.length);
-  const heroIdx = worldIdx >= 0 ? worldIdx : 0;
+  const specIdx = spectrumSrcIndex();
+  const worldIdx = panels.findIndex(p => worldEnabled && p.src >= cams.length && p.src !== specIdx);
+  // the hero is the world if it is up, otherwise the first panel that is not
+  // the meter — a spectrum readout should never dominate the composition
+  let heroIdx = worldIdx >= 0 ? worldIdx : panels.findIndex(p => p.src !== specIdx);
+  if (heroIdx < 0) heroIdx = 0;
   let sub = 0;
   panels.forEach((p, i) => {
     let want;
     if (i === heroIdx) want = 'HERO';
+    else if (p.src === specIdx) want = 'ACCENT';
     else if (panels.length <= 2) want = 'MID';
     // MID first, so the largest non-hero panel is a camera whenever the world
     // has taken the hero slot. starting on ACCENT could shrink the only
@@ -507,6 +589,14 @@ function syncPanels() {
   // preset scale multiplies the role range, so a MID under SHARD (x0.78) lands
   // at 21% of frame — and when the world holds the hero slot that can be the
   // only camera on screen. promote the biggest camera panel if none clears it.
+  // spread the bands across the spectrum by panel index. assigned every frame
+  // rather than only when unset, because reseatPanel rebuilds through
+  // makePanel — leaving this conditional meant the spread never applied and
+  // every panel got a random band, so they could all answer the same kick.
+  panels.forEach((p, i) => {
+    p.band = Math.floor(((i + 0.5) / panels.length) * SPEC_BANDS);
+  });
+
   // grown in place rather than rebuilt: syncPanels runs every frame, and
   // makePanel re-randomises position, so rebuilding here would teleport the
   // panel on every frame it failed the check. scaling height with width keeps
@@ -537,10 +627,14 @@ function updatePanels(dt) {
     p.y += p.vy * step;
     // turn around at a generous boundary rather than wrapping, so a panel
     // never pops from one edge to the other mid-drift
-    if (p.x < -0.16) { p.x = -0.16; p.vx = Math.abs(p.vx); }
-    if (p.x + p.w > 1.16) { p.x = 1.16 - p.w; p.vx = -Math.abs(p.vx); }
-    if (p.y < -0.14) { p.y = -0.14; p.vy = Math.abs(p.vy); }
-    if (p.y + p.h > 1.14) { p.y = 1.14 - p.h; p.vy = -Math.abs(p.vy); }
+    const bx = p.graphic ? 0 : -0.16;
+    const by = p.graphic ? 0 : -0.14;
+    const bw = p.graphic ? 1 : 1.16;
+    const bh = p.graphic ? 1 : 1.14;
+    if (p.x < bx) { p.x = bx; p.vx = Math.abs(p.vx); }
+    if (p.x + p.w > bw) { p.x = bw - p.w; p.vx = -Math.abs(p.vx); }
+    if (p.y < by) { p.y = by; p.vy = Math.abs(p.vy); }
+    if (p.y + p.h > bh) { p.y = bh - p.h; p.vy = -Math.abs(p.vy); }
   }
   // glitch jumps land on the beat. the trail from the old position is still
   // decaying in the feedback buffer when the panel reappears elsewhere, which
@@ -772,6 +866,9 @@ function sourceList() {
   if (worldEnabled) {
     out.push({ tex: worldFBO.tex, label: WORLD_MODES[worldMode], tag: 'GEN', world: true });
   }
+  if (spectrumEnabled && specTex) {
+    out.push({ tex: specTex, label: 'SPECTRUM', tag: 'SPC', flat: true });
+  }
   return out;
 }
 
@@ -792,7 +889,21 @@ function compositeCameras() {
   for (let i = 0; i < cells.length; i++) {
     const srcIdx = panels.length ? panels[i].src % sources.length : 0;
     const src = sources[srcIdx];
-    const [cx, cy, cw, ch] = cells[i];
+    let [cx, cy, cw, ch] = cells[i];
+
+    // breathe with this panel's band. applied here rather than to the panel's
+    // stored size so it is purely visual — the layout, the role hierarchy and
+    // the 60% ceiling all stay exactly where they were.
+    const pn = panels[i];
+    if (pn && spectrumReact > 0) {
+      const level = spec[pn.band % SPEC_BANDS] || 0;
+      const k = 1 + level * spectrumReact;
+      const nw = cw * k, nh = ch * k;
+      cx -= (nw - cw) * 0.5;   // grow about the centre
+      cy -= (nh - ch) * 0.5;
+      cw = nw; ch = nh;
+    }
+
     const px = Math.round(cx * srcFBO.w);
     const pw = Math.round(cw * srcFBO.w);
     const ph = Math.round(ch * srcFBO.h);
@@ -816,6 +927,11 @@ function compositeCameras() {
       gl.uniform2f(PROG.cell.u.u_video, vw, vh);
       gl.uniform1f(PROG.cell.u.u_mirror, 0);
       worldRect = { x: cx, y: cy, w: cw, h: ch };
+    } else if (src.flat) {
+      // a graphic, not a camera — keep its own aspect and never mirror it,
+      // or the bars would run right-to-left
+      gl.uniform2f(PROG.cell.u.u_video, specCanvas.width, specCanvas.height);
+      gl.uniform1f(PROG.cell.u.u_mirror, 0);
     } else {
       const v = cams[srcIdx % cams.length].video;
       gl.uniform2f(PROG.cell.u.u_video, v.videoWidth || 16, v.videoHeight || 9);
@@ -1075,6 +1191,7 @@ async function setupAudio(deviceId) {
     const n = analyser.frequencyBinCount;
     return Math.max(0, Math.min(n - 1, Math.round((hz / nyquist) * n)));
   };
+  buildSpecRanges();
   bandRanges = {
     bass: [bin(20), bin(200)],
     mids: [bin(200), bin(2000)],
@@ -1098,9 +1215,44 @@ function updateBands() {
     // clamped to 1.0 so a hot input can't push feedback decay past 1 and diverge
     bands[k] = Math.min(1.0, Math.max(raw, expected));
   }
+  updateSpectrum();
   barEls.bass.style.width = (bands.bass * 100).toFixed(1) + '%';
   barEls.mids.style.width = (bands.mids * 100).toFixed(1) + '%';
   barEls.highs.style.width = (bands.highs * 100).toFixed(1) + '%';
+}
+
+// a log-spaced spectrum. the FFT is linear in frequency, so a linear split
+// puts almost every musically meaningful band in the bottom few bins and
+// wastes the rest on hiss — log spacing is what makes the bars actually track
+// what you hear.
+const SPEC_BANDS = 24;
+const spec = new Float32Array(SPEC_BANDS);
+let specRanges = null;
+
+function buildSpecRanges() {
+  const n = analyser.frequencyBinCount;
+  const nyquist = audioCtx.sampleRate / 2;
+  const lo = 30, hi = Math.min(16000, nyquist);
+  specRanges = [];
+  for (let i = 0; i < SPEC_BANDS; i++) {
+    const f0 = lo * Math.pow(hi / lo, i / SPEC_BANDS);
+    const f1 = lo * Math.pow(hi / lo, (i + 1) / SPEC_BANDS);
+    const b0 = Math.max(0, Math.min(n - 1, Math.round((f0 / nyquist) * n)));
+    const b1 = Math.max(b0 + 1, Math.min(n - 1, Math.round((f1 / nyquist) * n)));
+    specRanges.push([b0, b1]);
+  }
+}
+
+function updateSpectrum() {
+  if (!analyser || !specRanges) return;
+  for (let i = 0; i < SPEC_BANDS; i++) {
+    const [b0, b1] = specRanges[i];
+    let sum = 0;
+    for (let b = b0; b <= b1; b++) sum += freqData[b];
+    const raw = Math.min(1, ((sum / (b1 - b0 + 1)) / 255) * audioGain * 1.25);
+    // peak-follow: snap up, ease down, so bars punch instead of smearing
+    spec[i] = raw > spec[i] ? raw : spec[i] * 0.86 + raw * 0.14;
+  }
 }
 
 const peakTransient = () =>
@@ -1688,6 +1840,10 @@ let trailGain = 0.55;
 // debug view of the control mask. deliberately NOT bound to a key — it is a
 // tuning aid, not a look. set it from the console if the mask needs checking.
 let showMask = false;
+// how hard panels scale with their band. 0.14 is about a 14% swell on a full
+// hit — enough to feel like the frame is answering the track, small enough
+// that the composition does not lurch.
+let spectrumReact = 0.14;
 // ASCII: 0 = off. mode 0 rebuilds the image from a density ladder, mode 1
 // fills the shape with repeating NOMU.
 let asciiAmount = 0;
@@ -1772,6 +1928,7 @@ function loop() {
   updatePanels(dt);
   uploadCameras();
   renderWorld(now);
+  if (spectrumEnabled) drawSpectrumPanel();
   compositeCameras();
   analyzeFrame();
   drawCellMarks();
@@ -2036,6 +2193,7 @@ const HELP = [
   ['', ''],
   ['w / W', '3D world on / next world'],
   ['y', 'ascii  off / ramp / nomu'],
+  ['s', 'spectrum panel on / off'],
   ['o', 'aspect  16:9 / 2.00 / 2.39'],
   ['u', 'registration marks'],
   ['g', 'text font mode'],
@@ -2056,7 +2214,7 @@ const HELP = [
 
 // flat list of the single keys HELP claims to document, for the drift check
 const HELP_KEYS = ['f','h','i','\\','r','c','C','x','X','p','P','l','L','a','w','W','y','o','u','g',
-                   'v','n','t','T','k','j','?'];
+                   'v','n','t','T','k','j','s','?'];
 
 function buildHelp() {
   const el = tag('help');
@@ -2133,7 +2291,7 @@ window.addEventListener('keydown', (e) => {
   } else if (k === 'h') {
     // null-safe: a layer that has been removed from the markup must not throw
     // and kill the loop
-    ['hud', 'text-overlay', 'code-lines', 'gif-layer', 'wave-canvas']
+    ['hud', 'text-overlay', 'code-lines', 'gif-layer']
       .forEach(id => { const el = tag(id); if (el) el.classList.toggle('hidden'); });
   } else if (k === 'i') {
     // HUD only — the technical readouts go, the artwork stays. `h` strips
@@ -2212,6 +2370,10 @@ window.addEventListener('keydown', (e) => {
     else { asciiAmount = 0; asciiMode = 0; }
     holdFx();   // you drove it — the scheduler backs off for a while
     updateFxTags();
+  } else if (k === 's') {
+    spectrumEnabled = !spectrumEnabled;
+    reconcileLayout();
+    updateCamTag();
   } else if (k === 'j') {
     // A/B the whole idea: 0 is the old uniform glitch, 1 is fully content-driven
     reactivity = reactivity > 0.75 ? 0 : (reactivity > 0.25 ? 1.0 : 0.5);
@@ -2525,42 +2687,16 @@ function gifSpawnerTick() {
 
 // ---------- waveform — scrolling recording-style ----------
 
-const waveCanvas = tag('wave-canvas');
-const waveCtx = waveCanvas.getContext('2d');
-
-// ring buffer of peak amplitudes — scrolls across the canvas over time
+// peak-amplitude history, still fed every frame — the spectrum panel draws
+// the scrolling waveform from it now that the DOM strip is gone
 const WAVE_HISTORY_LEN = 500;
 const waveHistory = new Float32Array(WAVE_HISTORY_LEN);
 let waveHistoryIdx = 0;
 let waveGain = 1.0;
 
-function resizeWave() {
-  // DPR uncapped here so the canvas stays sharp under browser zoom
-  const dpr = window.devicePixelRatio || 1;
-  const r = waveCanvas.getBoundingClientRect();
-  waveCanvas.width = Math.max(1, Math.floor(r.width * dpr));
-  waveCanvas.height = Math.max(1, Math.floor(r.height * dpr));
-}
-resizeWave();
-window.addEventListener('resize', resizeWave);
-
-// the waveform tracks the active palette instead of being permanently blue
-function waveColors() {
-  const c = palCur.bright;
-  const to255 = (x) => Math.round(Math.min(1, Math.max(0, x)) * 255);
-  const rgb = `${to255(c[0])}, ${to255(c[1])}, ${to255(c[2])}`;
-  const m = palCur.mid;
-  return {
-    fill: `rgba(${to255(m[0] * 1.4)}, ${to255(m[1] * 1.4)}, ${to255(m[2] * 1.4)}, 0.38)`,
-    line: `rgba(${rgb}, 0.95)`,
-    glow: `rgba(${rgb}, 0.55)`,
-  };
-}
-
 function drawWaveform() {
   if (!analyser || !waveData) return;
   analyser.getByteTimeDomainData(waveData);
-
   let peak = 0;
   for (let i = 0; i < waveData.length; i++) {
     const v = Math.abs(waveData[i] - 128) / 128;
@@ -2568,50 +2704,6 @@ function drawWaveform() {
   }
   waveHistory[waveHistoryIdx] = peak;
   waveHistoryIdx = (waveHistoryIdx + 1) % WAVE_HISTORY_LEN;
-
-  const w = waveCanvas.width;
-  const h = waveCanvas.height;
-  waveCtx.clearRect(0, 0, w, h);
-
-  const mid = h * 0.5;
-  const amp = h * 0.45 * 1.2 * waveGain;
-  const col = waveColors();
-
-  // filled mirror body
-  waveCtx.fillStyle = col.fill;
-  waveCtx.beginPath();
-  for (let i = 0; i < WAVE_HISTORY_LEN; i++) {
-    const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
-    const x = (i / (WAVE_HISTORY_LEN - 1)) * w;
-    const y = mid - waveHistory[idx] * amp;
-    if (i === 0) waveCtx.moveTo(x, y);
-    else waveCtx.lineTo(x, y);
-  }
-  for (let i = WAVE_HISTORY_LEN - 1; i >= 0; i--) {
-    const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
-    const x = (i / (WAVE_HISTORY_LEN - 1)) * w;
-    waveCtx.lineTo(x, mid + waveHistory[idx] * amp);
-  }
-  waveCtx.closePath();
-  waveCtx.fill();
-
-  // crisp outline top and bottom — reads as a shape, not fog
-  waveCtx.lineWidth = 1.5;
-  waveCtx.strokeStyle = col.line;
-  waveCtx.shadowBlur = 8;
-  waveCtx.shadowColor = col.glow;
-  for (const sign of [-1, 1]) {
-    waveCtx.beginPath();
-    for (let i = 0; i < WAVE_HISTORY_LEN; i++) {
-      const idx = (waveHistoryIdx + i) % WAVE_HISTORY_LEN;
-      const x = (i / (WAVE_HISTORY_LEN - 1)) * w;
-      const y = mid + sign * waveHistory[idx] * amp;
-      if (i === 0) waveCtx.moveTo(x, y);
-      else waveCtx.lineTo(x, y);
-    }
-    waveCtx.stroke();
-  }
-  waveCtx.shadowBlur = 0;
 }
 
 // ---------- energy follower ----------
@@ -2677,7 +2769,7 @@ const bigText = tag('big-text');
 const codeReadout = tag('code-readout');
 
 // the only word baked in is the artist name — add to this list to cycle others
-const WORDS = ['nomu'];
+const WORDS = ['nomu.'];
 
 // serious faces only. the old pool cycled through Comic Sans, Brush Script and
 // Bradley Hand — novelty faces are the single loudest "made in a phone app"

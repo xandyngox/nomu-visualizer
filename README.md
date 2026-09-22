@@ -116,6 +116,22 @@ sand on the other, `MOUNTAIN` ridged terrain under a hazy sky, `RAIN` columns
 of NOMU falling away into perspective. The camera feed is projected onto the
 surfaces, so the scenes are lit and textured by what the camera sees.
 
+**Spectrum** (`s`) — a 24-band log-spaced meter with the scrolling peak
+waveform behind it. It is a source like any camera, so it lands in a panel with
+the same hairline border and corner label rather than being pinned across the
+bottom of the frame. It never takes the hero slot and never hangs off the frame
+edge: a cropped shot reads as composed, a bar chart with its left third missing
+reads as broken.
+
+The spacing is logarithmic because the FFT is linear in frequency — an even
+split puts almost everything you can hear in the bottom few bins and spends the
+rest on hiss.
+
+**Panels react to it.** Each panel is assigned a band, spread across the
+spectrum by index so the set covers the range instead of every pane pumping on
+the same kick, and swells up to 14% on a full hit. The swell is applied at draw
+time, so the layout, the role hierarchy and the 60% ceiling are untouched.
+
 **ASCII** (`y`) — off, then a density ladder that rebuilds the image out of
 characters, then repeating `NOMU` filling the shape with brightness carrying
 the picture. Runs before the palette so the type is graded like everything
@@ -176,7 +192,7 @@ quiet passages sit at genuinely crisp 1px, a transient hit opens the ceiling up.
 | `k` | toggle strobe + invert flashes |
 | `[` / `]` | audio gain |
 | `←` / `→` | exposure |
-| `↑` / `↓` | waveform gain |
+| `↑` / `↓` | waveform gain (spectrum panel) |
 | `-` / `=` | render scale (disables auto) |
 | `g` | text font mode (BEAT / STROBE / HOLD) |
 | `l` / `L` | panel preset / auto-layout |
@@ -184,6 +200,7 @@ quiet passages sit at genuinely crisp 1px, a transient hit opens the ceiling up.
 | `u` | registration marks |
 | `j` | glitch reactivity 0 / .5 / 1 |
 | `y` | ascii: off / ramp / nomu |
+| `s` | spectrum panel on / off |
 | `w` / `W` | 3D world on / next world |
 
 The ASCII pass and the 3D worlds are WebGL passes, not DOM layers, so `h`
