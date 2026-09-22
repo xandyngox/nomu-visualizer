@@ -429,7 +429,8 @@ function drawSpectrumPanel() {
 // trails come for free: the composite is rebuilt each frame and the feedback
 // pass keeps max(current, previous * decay), so anything that moves smears.
 
-const MAX_PANELS = 4;
+const MIN_PANELS = 3;
+const MAX_PANELS = 10;
 
 // each preset is a different density and temperament, not a different grid
 // every panel set gets a deliberate size hierarchy rather than a row of
@@ -443,20 +444,31 @@ const ROLES = {
   ACCENT: { min: 0.15, max: 0.25 },
 };
 
-// `scale` shifts the whole set bigger or smaller while keeping the hierarchy
+// `count` is a RANGE, re-rolled whenever the preset changes, so the number of
+// frames on screen varies over a set instead of being a constant per preset.
+// `scale` shifts the whole set bigger or smaller while keeping the hierarchy.
 const SCATTER = [
-  { name: 'DRIFT', count: 3, scale: 1.00, speed: 0.012, jump: 0.10 },
-  { name: 'SWARM', count: 4, scale: 0.88, speed: 0.024, jump: 0.28 },
-  { name: 'SLAB',  count: 2, scale: 1.15, speed: 0.007, jump: 0.06 },
-  { name: 'SHARD', count: 4, scale: 0.78, speed: 0.032, jump: 0.40 },
+  { name: 'DRIFT', count: [3, 5],  scale: 1.00, speed: 0.012, jump: 0.10 },
+  { name: 'SWARM', count: [5, 8],  scale: 0.86, speed: 0.024, jump: 0.28 },
+  { name: 'SLAB',  count: [3, 4],  scale: 1.15, speed: 0.007, jump: 0.06 },
+  { name: 'SHARD', count: [6, 10], scale: 0.72, speed: 0.032, jump: 0.40 },
 ];
+
+// the live target, re-rolled on preset change rather than every frame —
+// syncPanels runs per frame and would otherwise thrash the set continuously
+let panelTarget = 3;
+function rollPanelTarget() {
+  const [lo, hi] = scatter().count;
+  panelTarget = lo + Math.floor(Math.random() * (hi - lo + 1));
+}
 
 // exactly one hero, then alternate mids and accents so there is always
 // something small playing against something large
 function roleForIndex(i, n) {
   if (i === 0) return 'HERO';
   if (n <= 2) return 'MID';
-  return (i % 2 === 1) ? 'ACCENT' : 'MID';
+  if (n <= 5) return (i % 2 === 1) ? 'ACCENT' : 'MID';
+  return (i % 3 === 0) ? 'MID' : 'ACCENT';
 }
 let scatterIdx = 0;
 const scatter = () => SCATTER[scatterIdx];
@@ -548,7 +560,11 @@ function reseatPanel(p) {
 function syncPanels() {
   const n = sourceCount();
   if (n === 0) { panels.length = 0; return; }
-  const target = Math.min(Math.max(scatter().count, n), Math.max(MAX_PANELS, n));
+  // never fewer than MIN_PANELS, never fewer than the number of sources, and
+  // never more than MAX_PANELS unless there are simply that many sources
+  const target = Math.min(
+    Math.max(panelTarget, n, MIN_PANELS),
+    Math.max(MAX_PANELS, n));
 
   for (const p of panels) if (p.src >= n) p.src = Math.floor(Math.random() * n);
   while (panels.length > target) panels.pop();
@@ -575,13 +591,16 @@ function syncPanels() {
   let sub = 0;
   panels.forEach((p, i) => {
     let want;
+    // MID first, so the largest non-hero panel is a camera whenever the world
+    // has taken the hero slot. starting on ACCENT could shrink the only
+    // camera to 15% of frame. past five panels the mix tilts toward accents —
+    // a crowd of mid-sized frames is clutter, a crowd of small ones against
+    // one hero is still a composition.
     if (i === heroIdx) want = 'HERO';
     else if (p.src === specIdx) want = 'ACCENT';
     else if (panels.length <= 2) want = 'MID';
-    // MID first, so the largest non-hero panel is a camera whenever the world
-    // has taken the hero slot. starting on ACCENT could shrink the only
-    // camera to 15% of frame.
-    else want = (sub++ % 2 === 0) ? 'MID' : 'ACCENT';
+    else if (panels.length <= 5) want = (sub++ % 2 === 0) ? 'MID' : 'ACCENT';
+    else want = (sub++ % 3 === 0) ? 'MID' : 'ACCENT';
     if (p.role !== want) Object.assign(p, makePanel(p.src, want));
   });
 
@@ -657,6 +676,7 @@ function setLayout(name) {
   const changed = i >= 0 && i !== scatterIdx;
   if (i >= 0) scatterIdx = i;
   layoutName = SCATTER[scatterIdx].name;
+  rollPanelTarget();   // new preset, new number of frames
   syncPanels();
   // the role re-assignment only resizes panels whose ROLE changed, so a preset
   // switch would otherwise leave same-role panels carrying the old preset's

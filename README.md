@@ -96,8 +96,13 @@ colder rather than as a different piece. The auto-picker is weighted toward
 Changes crossfade over about a second rather than cutting.
 
 **Panels** (`l`) — no grid. Sources land in irregular overlapping rectangles
-that drift, jump on the beat and trail. Max 4, and no single panel may exceed
-60% of the frame in either axis.
+that drift, jump on the beat and trail. Between 3 and 10 on screen at once,
+and no single panel may exceed 60% of the frame in either axis.
+
+The count is a range per preset, re-rolled on every preset change, so the
+number of frames varies across a set rather than being a constant. Every source
+is always guaranteed a panel, so the floor rises if you are running more
+cameras than the preset asked for.
 
 Every set has a deliberate size hierarchy rather than a row of similar
 rectangles: exactly one **HERO** carrying the composition, then **MID**s and
@@ -106,8 +111,12 @@ they are placed — the dominant/subordinate relationship is what makes it a
 composition. When a 3D world is up it takes the hero slot, because at thumbnail
 size every world looks like the same patch of noise.
 
+Past five panels the mix tilts toward accents — a crowd of mid-sized frames is
+clutter, a crowd of small ones against one hero is still a composition.
+
 Presets shift the whole set bigger or smaller while keeping the hierarchy:
-`DRIFT` (3, slow), `SWARM` (4), `SLAB` (2 large), `SHARD` (4 small, fast).
+`DRIFT` (3-5, slow), `SWARM` (5-8), `SLAB` (3-4 large), `SHARD` (6-10 small,
+fast).
 
 **Worlds** (`w` on/off, `W` next) — raymarched 3D that takes a panel alongside
 the cameras. `ROOMS` an endless pillared hall, `TUNNEL`, `ORBIT` a morphing
@@ -262,8 +271,8 @@ grid however small they got.
 - **A low bit-depth floor.** The crush bottoms out at 30 levels, not 8. At 8
   the ordered dither amplitude is 1/8, enough to flip neighbouring pixels
   between black and white and checkerboard every flat area.
-- **Grids.** No tiling scenes, and panels cap at 4 with raised minimum sizes —
-  five small frames read as a thumbnail grid however they are placed.
+- **Grids.** No tiling scenes, and tile position and size are continuous
+  rather than snapped to a lattice.
 - **A second grain layer.** There used to be a DOM `#grain-overlay` on top of
   everything at `mix-blend-mode: overlay`. Overlay blending is a contrast
   amplifier, so random noise through it snapped hard to black and white and
