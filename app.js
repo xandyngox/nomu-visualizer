@@ -432,15 +432,15 @@ const SNAP_X = 48;
 const SNAP_Y = 27;
 const snapTo = (v, n) => Math.round(v * n) / n;
 
-function makePanel(src, role) {
+function makePanel(src, role, minWidth) {
   const m = scatter();
   // hard ceiling: no single panel may take more than 60% of the frame in
   // either axis. one big pane crowds out everything else, and the overlays and
   // the other panes need room to register.
   const MAX_SPAN = 0.60;
   const r = ROLES[role || 'MID'];
-  const lo = Math.min(MAX_SPAN, r.min * m.scale);
-  const hi = Math.min(MAX_SPAN, r.max * m.scale);
+  const lo = Math.min(MAX_SPAN, Math.max(r.min * m.scale, minWidth || 0));
+  const hi = Math.min(MAX_SPAN, Math.max(r.max * m.scale, minWidth || 0));
   const w = lo + Math.random() * Math.max(0.01, hi - lo);
   // height is independent of width, so panels are never uniformly square and
   // never all the same shape. accents stay compact; heroes can run tall.
@@ -496,9 +496,29 @@ function syncPanels() {
     let want;
     if (i === heroIdx) want = 'HERO';
     else if (panels.length <= 2) want = 'MID';
-    else want = (sub++ % 2 === 0) ? 'ACCENT' : 'MID';
+    // MID first, so the largest non-hero panel is a camera whenever the world
+    // has taken the hero slot. starting on ACCENT could shrink the only
+    // camera to 15% of frame.
+    else want = (sub++ % 2 === 0) ? 'MID' : 'ACCENT';
     if (p.role !== want) Object.assign(p, makePanel(p.src, want));
   });
+
+  // "a camera is always in view" has to mean legible, not merely present. the
+  // preset scale multiplies the role range, so a MID under SHARD (x0.78) lands
+  // at 21% of frame — and when the world holds the hero slot that can be the
+  // only camera on screen. promote the biggest camera panel if none clears it.
+  // grown in place rather than rebuilt: syncPanels runs every frame, and
+  // makePanel re-randomises position, so rebuilding here would teleport the
+  // panel on every frame it failed the check. scaling height with width keeps
+  // the aspect, and once it clears the bar the branch stops firing.
+  const MIN_LEAD_CAM = 0.32;
+  const camPanels = panels.filter(p => p.src < cams.length);
+  if (camPanels.length && !camPanels.some(p => p.w >= MIN_LEAD_CAM)) {
+    const lead = camPanels.reduce((a, b) => (a.w >= b.w ? a : b));
+    const k = MIN_LEAD_CAM / Math.max(0.01, lead.w);
+    lead.w = MIN_LEAD_CAM;
+    lead.h = Math.max(0.13, Math.min(0.60, lead.h * k));
+  }
 
   // if duplicates crowded out a source, force it back in
   for (let i = 0; i < n; i++) {
@@ -1583,6 +1603,11 @@ function applyScale() {
 }
 
 function updateGovernor(dt) {
+  // a backgrounded tab has requestAnimationFrame throttled to about 1fps, which
+  // is not a GPU problem. without this the measured frame time balloons, the
+  // governor concludes the machine cannot keep up and walks the resolution
+  // down — so alt-tabbing away and back would quietly cost you render scale.
+  if (document.hidden) return;
   frameMsEMA += (dt - frameMsEMA) * 0.05;
   const t = tag('fps-tag');
   if (t && (govCount % 15) === 0) t.textContent = (1000 / frameMsEMA).toFixed(0);
@@ -1683,7 +1708,10 @@ const LETTERBOX_MODES = [
   { name: '2.00', aspect: 2.00 },
   { name: '2.39', aspect: 2.39 },
 ];
-let letterboxIdx = 1;
+// defaults to full frame. the bars were mathematically negative until the
+// aspect fix, so they never actually drew — turning them on by default was an
+// unintended change in look, not a decision. `o` still cycles the crops.
+let letterboxIdx = 0;
 let letterbox = 0;
 
 function updateLetterbox() {
@@ -2049,6 +2077,7 @@ function saveSettings() {
     const disabled = [...camSeen].filter(id => !camEnabled.has(id));
     localStorage.setItem('nomu-vis', JSON.stringify({
       audioGain, waveGain, exposure, scaleIdx, autoScale, strobeEnabled, fontMode,
+      settingsVersion: 2,
       autoCamCycle, camDisabled: disabled, letterboxIdx, marksEnabled, autoLayout,
     }));
   } catch (e) { /* private window / blocked storage — settings just don't persist */ }
@@ -2066,7 +2095,11 @@ function loadSettings() {
     if (typeof s.fontMode === 'string') fontMode = s.fontMode;
     if (typeof s.autoCamCycle === 'boolean') autoCamCycle = s.autoCamCycle;
     if (Array.isArray(s.camDisabled)) s.camDisabled.forEach(id => camDisabledPersisted.add(id));
-    if (typeof s.letterboxIdx === 'number') letterboxIdx = Math.max(0, Math.min(LETTERBOX_MODES.length - 1, s.letterboxIdx));
+    // only honour a letterbox preference saved AFTER the aspect fix; anything
+    // older was chosen against bars that never rendered
+    if (s.settingsVersion === 2 && typeof s.letterboxIdx === 'number') {
+      letterboxIdx = Math.max(0, Math.min(LETTERBOX_MODES.length - 1, s.letterboxIdx));
+    }
     if (typeof s.marksEnabled === 'boolean') marksEnabled = s.marksEnabled;
     if (typeof s.autoLayout === 'boolean') autoLayout = s.autoLayout;
   } catch (e) { /* ignore */ }

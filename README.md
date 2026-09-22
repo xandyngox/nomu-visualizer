@@ -194,7 +194,7 @@ for encoding settings and what kind of footage survives the palette.
 | `-` / `=` | render scale (disables auto) |
 | `g` | text font mode (BEAT / STROBE / HOLD) |
 | `l` / `L` | camera layout / auto-layout |
-| `o` | aspect 16:9 / 2.00 / 2.39 |
+| `o` | aspect 16:9 (default, full frame) / 2.00 / 2.39 |
 | `u` | registration marks |
 | `j` | glitch reactivity 0 / .5 / 1 |
 | `y` | ascii: off / ramp / nomu |
