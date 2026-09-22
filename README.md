@@ -31,14 +31,10 @@ hit **start**.
 
 ## Cameras
 
-**All open cameras are on screen at once.** They composite into a split, grid,
-strips or picture-in-picture layout with a hairline gutter and a small corner
-label per cell. `l` cycles layouts, `L` stops the auto-cycling. The layout is
-the background of the frame — clips and GIFs sit on top of it, so a camera is
-always visible.
-
-Only layouts that fit every open camera are offered, and the set changes as
-cameras come and go.
+**All open cameras are on screen at once**, as scattered overlapping panels
+with a hairline gutter and a small corner label each. See **Panels** below.
+A camera is always on screen and the largest camera panel is never smaller
+than 32% of the frame, so there is always one you can actually read.
 
 Every video input the browser reports shows up in the list, and the set is live:
 plug in a capture card or wake an iPhone over Continuity Camera and a row
@@ -113,11 +109,6 @@ size every world looks like the same patch of noise.
 Presets shift the whole set bigger or smaller while keeping the hierarchy:
 `DRIFT` (3, slow), `SWARM` (4), `SLAB` (2 large), `SHARD` (4 small, fast).
 
-**Worlds** (`w` on/off, `W` next) — these get the largest panel in the set
-(46-60% of frame) and render at full internal resolution. They were previously
-sharing the mask's half-res buffer and landing in a small random panel, which
-made every world look like the same patch of noise.
-
 **Worlds** (`w` on/off, `W` next) — raymarched 3D that takes a panel alongside
 the cameras. `ROOMS` an endless pillared hall, `TUNNEL`, `ORBIT` a morphing
 monolith, `COASTER`, `OCEAN` a shoreline with the swell on one side and calm
@@ -130,11 +121,14 @@ characters, then repeating `NOMU` filling the shape with brightness carrying
 the picture. Runs before the palette so the type is graded like everything
 else.
 
-**Scenes** (`c`) — the composition transform applied to the whole composite:
-`DIRECT`, `FLIP`, `KALEIDO-H`, `KALEIDO-V`, `QUAD`, `GRID-4/9/16`, `TUNNEL`, `TRI`,
-`SLICE`, `COLUMN`.
+**Scenes** (`c`) — `DIRECT`, `FLIP`, `SLICE` (irregular bands slid sideways),
+`PUSH` (slow breathing zoom). Every tiling and folding composition has been
+removed: the kaleidoscopes and polar tunnel were radial symmetry, and
+`GRID-4/9/16` and `COLUMN` divided the frame into a regular 2x2, 3x3, 4x4 or
+eight equal strips — a literal grid, which is the one thing this is meant not
+to look like.
 
-`a` toggles auto-scheduling of all three. With it off, you drive.
+`a` toggles auto-scheduling of every axis. With it off, you drive.
 
 ## Reactive glitch
 
@@ -151,21 +145,13 @@ one uniform mosaic.
 
 The global half of the correlation is an envelope follower on audio energy
 (fast attack, slow release, quantized into six tiers) which sets that ceiling —
-quiet passages sit at genuinely crisp 1px, a transient hit opens it to ~9px.
+quiet passages sit at genuinely crisp 1px, a transient hit opens the ceiling up.
 
 - `j` cycles reactivity 0 / 0.5 / 1. At 0 you get the old uniform behaviour,
   which is worth seeing once for the comparison.
 - The mask can be viewed directly for tuning (red detail, green motion, blue
   wake), but it is a diagnostic rather than a look, so it is not on a key —
   set `showMask = true` from the console if you need it.
-
-## Overlay clips
-
-Drop `.mp4` / `.webm` files into `clips/` and list them in
-`clips/manifest.json`. They spawn as tiles on the same 12x8 grid as everything
-else, over the camera composite, and are graded through the active palette so
-they belong to the frame instead of sitting on top of it. See `clips/README.md`
-for encoding settings and what kind of footage survives the palette.
 
 ## Hotkeys
 
@@ -182,7 +168,7 @@ for encoding settings and what kind of footage survives the palette.
 | `c` / `C` | next / prev scene |
 | `x` / `X` | next / prev rig |
 | `p` / `P` | next / prev palette |
-| `a` | toggle auto scene+rig+palette |
+| `a` | toggle all auto-scheduling |
 | `1`–`9` | pick camera |
 | `v` | next camera |
 | `n` | hold camera (stop auto-cycle) |
@@ -193,7 +179,7 @@ for encoding settings and what kind of footage survives the palette.
 | `↑` / `↓` | waveform gain |
 | `-` / `=` | render scale (disables auto) |
 | `g` | text font mode (BEAT / STROBE / HOLD) |
-| `l` / `L` | camera layout / auto-layout |
+| `l` / `L` | panel preset / auto-layout |
 | `o` | aspect 16:9 (default, full frame) / 2.00 / 2.39 |
 | `u` | registration marks |
 | `j` | glitch reactivity 0 / .5 / 1 |
@@ -234,7 +220,6 @@ run at zero strength.
 | `shaders.js` | all GLSL |
 | `app.js` | everything else |
 | `nomu_gifs/` | the floating GIF tiles |
-| `clips/` | your overlay footage + its manifest |
 
 ## Things that are deliberately not here
 
