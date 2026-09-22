@@ -236,10 +236,28 @@
       opacity: 0.85;
       filter: url(#gif-palette);
     }
+    /* a plain 1px rectangle read as a stock thumbnail. the tile is now a
+       notched shape (clip-path set per tile from JS) with a second, offset,
+       differently-notched outline behind it — a mis-registered frame, the way
+       a bad decode lands two copies of an edge a few pixels apart. */
     .gif-tile {
       position: absolute;
       overflow: hidden;
-      border: 1px solid rgba(232, 238, 255, 0.22);
+    }
+    .gif-edge {
+      position: absolute;
+      pointer-events: none;
+      border: 1px solid rgba(232, 238, 255, 0.5);
+    }
+    .gif-edge.ghost {
+      border-color: rgba(150, 190, 255, 0.28);
+    }
+    /* corner ticks, drawn as two thin bars rather than a full border, so the
+       frame reads as registration marks rather than as a picture frame */
+    .gif-tick {
+      position: absolute;
+      background: rgba(232, 238, 255, 0.75);
+      pointer-events: none;
     }
     .gif-tile img {
       width: 100%;

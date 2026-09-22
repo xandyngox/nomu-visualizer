@@ -262,6 +262,17 @@ Tile position and size are continuous, not snapped to a grid. They used to land
 on a 12x8 lattice, which lined their edges up with each other and read as a
 grid however small they got.
 
+## Marks and tile frames
+
+Each panel gets asymmetric registration brackets: every corner has its own two
+arm lengths, and not every corner is drawn. Four identical L's on every panel
+reads as a template. The style is derived from a per-panel seed rather than
+rolled per frame, which would strobe — `u` toggles the layer.
+
+GIF tiles are a notched shape (a rectangle with a few bites out of its edges)
+with a second, differently-notched outline offset a few pixels behind it, plus
+a pair of corner ticks. A plain 1px rectangle read as a stock thumbnail.
+
 ## Things that are deliberately not here
 
 - **Hard binary block patterns.** The motion wake used to be drawn as

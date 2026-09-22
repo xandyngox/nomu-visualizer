@@ -537,6 +537,9 @@ function makePanel(src, role, minWidth) {
   return {
     src,
     graphic,
+    // stable identity for this panel's registration-mark style. drawCellMarks
+    // runs every frame, so rolling the style there would make it strobe.
+    markSeed: Math.random() * 1000,
     role: role || 'MID',
     // placeholder — syncPanels owns the real assignment, by index
     band: 0,
@@ -550,9 +553,18 @@ function makePanel(src, role, minWidth) {
   };
 }
 
+// the motion grid compares the COMPOSITE frame to frame, so when a panel jumps
+// to a new position the whole of its old and new rectangle changes at once and
+// a solid block of cells trips. that is the "full rectangle of squares" — it is
+// the layout moving, not anything in the room. suppress the overlay for a beat
+// afterwards so it only ever reports real motion.
+let motionSettleUntil = 0;
+const settleMotion = () => { motionSettleUntil = performance.now() + 220; };
+
 // respawn in place, keeping the panel's role so the hierarchy survives a jump
 function reseatPanel(p) {
   Object.assign(p, makePanel(p.src, p.role));
+  settleMotion();
 }
 
 // keep the panel set matching the sources: one each, then fill to the preset's
@@ -677,6 +689,7 @@ function setLayout(name) {
   if (i >= 0) scatterIdx = i;
   layoutName = SCATTER[scatterIdx].name;
   rollPanelTarget();   // new preset, new number of frames
+  settleMotion();
   syncPanels();
   // the role re-assignment only resizes panels whose ROLE changed, so a preset
   // switch would otherwise leave same-role panels carrying the old preset's
@@ -974,6 +987,7 @@ function compositeCameras() {
     // record in CSS pixels, top-left origin, for the marks overlay
     lastCellRects.push({
       i,
+      seed: pn ? pn.markSeed : i * 37.7,
       cam: srcIdx,
       tagName: src.tag,
       label: src.label,
@@ -2150,8 +2164,13 @@ function loop() {
       setTex(PROG.motion, 'u_curr', 1, motionCurr.tex);
       setTex(PROG.motion, 'u_prev', 2, motionPrev.tex);
       gl.uniform2f(u.u_grid, MOTION_W, MOTION_H);
-      gl.uniform1f(u.u_thresh, 0.06);
-      gl.uniform1f(u.u_amount, R.motion);
+      // 0.06 lit up on panel drift and on any broad lighting change. 0.15
+      // needs actual movement in the frame.
+      gl.uniform1f(u.u_thresh, 0.15);
+      // fade back in after a layout change rather than cutting, so the grid
+      // does not pop
+      const settle = Math.min(1, Math.max(0, (now - motionSettleUntil) / 260));
+      gl.uniform1f(u.u_amount, R.motion * settle);
     });
 
     // swap so this frame's curr is next frame's prev
@@ -2515,6 +2534,37 @@ function bracket(ctx, x, y, w, h, len) {
   }
 }
 
+// small deterministic PRNG so a panel's mark style derives from its seed
+// rather than being re-rolled every frame, which would strobe
+function seeded(seed) {
+  let x = Math.floor(Math.abs(seed) * 9301 + 49297) % 233280;
+  return () => { x = (x * 9301 + 49297) % 233280; return x / 233280; };
+}
+
+// asymmetric brackets: each corner gets its own two arm lengths, and not every
+// corner is drawn. four identical L's on every panel reads as a template —
+// varying which corners appear and how far each arm runs makes every frame
+// look individually marked up.
+function bracketVaried(ctx, x, y, w, h, base, rnd) {
+  const corners = [
+    [x, y, 1, 1], [x + w, y, -1, 1],
+    [x, y + h, 1, -1], [x + w, y + h, -1, -1],
+  ];
+  const on = corners.map(() => rnd() > 0.3);
+  // always at least two, diagonally opposite, so it still reads as a frame
+  if (on.filter(Boolean).length < 2) { on[0] = true; on[3] = true; }
+  corners.forEach(([bx, by, sx, sy], i) => {
+    if (!on[i]) return;
+    const ax = base * (0.5 + rnd() * 1.3);
+    const ay = base * (0.5 + rnd() * 1.3);
+    ctx.beginPath();
+    ctx.moveTo(snap(bx + sx * ax), snap(by));
+    ctx.lineTo(snap(bx), snap(by));
+    ctx.lineTo(snap(bx), snap(by + sy * ay));
+    ctx.stroke();
+  });
+}
+
 function drawCellMarks() {
   if (!marksCtx || !marksEnabled) return;
   const W = window.innerWidth;
@@ -2538,12 +2588,13 @@ function drawCellMarks() {
     const y = Math.max(top, r.y);
     const h = Math.min(bot, r.y + r.h) - y;
     if (h <= 4) continue;
-    // arms scale with the panel and cap low. on a small ACCENT panel a long
-    // arm nearly meets its neighbour and the four corners close up into a
-    // little white box instead of reading as registration marks.
-    const inset = 7;
-    bracket(ctx, r.x + inset, y + inset, r.w - inset * 2, h - inset * 2,
-            Math.max(4, Math.min(11, r.w * 0.045)));
+    // longer arms than before, scaled to the panel's SHORT side, and capped so
+    // a small ACCENT panel's corners still cannot close up into a solid box
+    const rnd = seeded(r.seed);
+    const inset = 6 + rnd() * 8;
+    const base = Math.max(9, Math.min(34, Math.min(r.w, h) * 0.13));
+    bracketVaried(ctx, r.x + inset, y + inset, r.w - inset * 2, h - inset * 2,
+                  base, rnd);
 
     const id = String(r.cam + 1).padStart(2, '0');
     const kind = r.tagName || 'CAM';
@@ -2642,6 +2693,49 @@ const gifPreload = GIF_FILES.map(f => {
   return im;
 });
 
+// a rectangle with a few bites taken out of its edges, as a CSS polygon.
+// randomised per tile so no two tiles share a silhouette.
+function glitchClip() {
+  const pts = [];
+  const notch = () => 3 + Math.random() * 7;          // depth, in %
+  const push = (x, y) => pts.push(`${x.toFixed(1)}% ${y.toFixed(1)}%`);
+  push(0, 0);
+  if (Math.random() < 0.7) {                           // top edge bite
+    const a = 20 + Math.random() * 40, d = notch();
+    push(a, 0); push(a, d); push(a + 8 + Math.random() * 12, d);
+    push(a + 8 + Math.random() * 12, 0);
+  }
+  push(100, 0);
+  if (Math.random() < 0.6) {                           // right edge bite
+    const a = 25 + Math.random() * 40, d = notch();
+    push(100, a); push(100 - d, a); push(100 - d, a + 10 + Math.random() * 14);
+    push(100, a + 10 + Math.random() * 14);
+  }
+  push(100, 100);
+  if (Math.random() < 0.7) {                           // bottom edge bite
+    const a = 55 + Math.random() * 30, d = notch();
+    push(a, 100); push(a, 100 - d); push(a - 8 - Math.random() * 12, 100 - d);
+    push(a - 8 - Math.random() * 12, 100);
+  }
+  push(0, 100);
+  return `polygon(${pts.join(', ')})`;
+}
+
+// two short bars at one corner — a registration tick, not a picture frame
+function addCornerTicks(host, w, h) {
+  const len = Math.max(6, Math.min(18, w * 0.16));
+  const corners = [[0, 0, 1, 1], [w, 0, -1, 1], [0, h, 1, -1], [w, h, -1, -1]];
+  const [cx, cy, sx, sy] = corners[Math.floor(Math.random() * corners.length)];
+  const mk = (x, y, ww, hh) => {
+    const t = document.createElement('div');
+    t.className = 'gif-tick';
+    t.style.cssText = `left:${x}px;top:${y}px;width:${ww}px;height:${hh}px;`;
+    host.appendChild(t);
+  };
+  mk(sx > 0 ? cx : cx - len, sy > 0 ? cy : cy - 1, len, 1);
+  mk(sx > 0 ? cx : cx - 1, sy > 0 ? cy : cy - len, 1, len);
+}
+
 function spawnGifTile(opts) {
   opts = opts || {};
   const W = window.innerWidth;
@@ -2659,6 +2753,7 @@ function spawnGifTile(opts) {
   const lifespan = opts.lifespan ?? (1000 + Math.random() * 3000);
   const flicker = opts.flicker ?? true;
 
+  let entryFrame = null;
   const el = document.createElement('div');
   el.className = 'gif-tile';
   el.style.left = Math.round(spot.x * W) + 'px';
@@ -2671,9 +2766,33 @@ function spawnGifTile(opts) {
   img.src = gifPreload[Math.floor(Math.random() * gifPreload.length)].src;
   img.decoding = 'async';
   el.appendChild(img);
+  el.style.clipPath = glitchClip();
   gifLayer.appendChild(el);
 
-  const entry = { el, dead: false, targetOp, isFlash: !!opts.flash };
+  // the frame: two outlines with different notches, a few pixels apart
+  const pw = Math.round(fw * W);
+  const ph = Math.round(fh * (H - bar * 2));
+  const ox = Math.round(el.offsetLeft), oy = Math.round(el.offsetTop);
+  const frame = document.createElement('div');
+  frame.style.cssText =
+    `position:absolute;left:${ox}px;top:${oy}px;width:${pw}px;height:${ph}px;` +
+    `opacity:${targetOp.toFixed(2)};pointer-events:none;`;
+  const edge = document.createElement('div');
+  edge.className = 'gif-edge';
+  edge.style.cssText = 'inset:0;';
+  edge.style.clipPath = glitchClip();
+  const ghost = document.createElement('div');
+  ghost.className = 'gif-edge ghost';
+  const gx = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 5);
+  const gy = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 4);
+  ghost.style.cssText = `left:${gx.toFixed(0)}px;top:${gy.toFixed(0)}px;right:${(-gx).toFixed(0)}px;bottom:${(-gy).toFixed(0)}px;`;
+  ghost.style.clipPath = glitchClip();
+  frame.append(ghost, edge);
+  addCornerTicks(frame, pw, ph);
+  gifLayer.appendChild(frame);
+  entryFrame = frame;
+
+  const entry = { el, frame: entryFrame, dead: false, targetOp, isFlash: !!opts.flash };
   activeGifs.push(entry);
 
   let flickerId = null;
@@ -2693,6 +2812,7 @@ function spawnGifTile(opts) {
     entry.dead = true;
     if (flickerId) clearInterval(flickerId);
     el.remove();
+    if (entry.frame) entry.frame.remove();
     const idx = activeGifs.indexOf(entry);
     if (idx >= 0) activeGifs.splice(idx, 1);
   }, lifespan);
