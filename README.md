@@ -1,33 +1,54 @@
 # nomu visualizer
 
-Live audio-reactive visuals. Webcam(s) in, WebGL glitch chain out. No build step,
-no dependencies.
+Live audio-reactive visuals. Camera(s) in, WebGL glitch chain out. No build
+step, no dependencies, no install.
 
-## Running
-
-> The page loads `shaders.js` and `app.js` with a cache-busting query, so you
-> always get the current code. A stale `app.js` against a fresh `index.html`
-> throws on the first missing element and the render loop dies — which looks
-> exactly like "the cameras are broken".
-
-
-Needs to be served over `localhost` — `getUserMedia` refuses to run from `file://`.
+## Setting up on a new laptop
 
 ```bash
-cd ~/dev/visualizer && python3 -m http.server 8137
+git clone https://github.com/xandyngox/nomu-visualizer.git
+cd nomu-visualizer
+./run.command
 ```
 
-Open <http://localhost:8137>, tick the cameras you want, pick the audio input,
-hit **start**.
+Or clone it and **double-click `run.command` in Finder** — it starts a local
+server, opens the browser and prints what it is doing. Leave that window open
+while you use it; Ctrl-C there stops it.
+
+The launcher finds a web server on its own (python3, python, npx or ruby) and
+picks a free port, preferring 8137. If none of those exist it tells you to run
+`xcode-select --install`, which is the shortest path to Python on macOS.
+
+It has to be served over `http://localhost`. Browsers refuse camera and
+microphone access to pages opened from a `file://` path, so double-clicking
+`index.html` will not work.
+
+### First run
+
+1. Allow camera and microphone when the browser asks. macOS also has to allow
+   the browser itself, under System Settings > Privacy & Security > Camera.
+2. Tick the cameras you want. All detected inputs are listed live.
+3. Pick the audio input — for a show this is the line-in from the desk, not the
+   built-in mic.
+4. **start**, then `f` for fullscreen on the projector output.
+5. `?` at any time for the hotkey sheet.
+
+> Camera permission is granted per origin, and the port is part of the origin.
+> Sticking to the default 8137 means you only grant it once. The launcher tells
+> you if it had to use a different port.
 
 ### Soundcheck
 
-1. `f` — fullscreen on the projector output.
-2. `[` / `]` — trim audio gain until the BASS/MIDS/HIGH bars peak around
-   0.7–0.9 on the loud parts. Everything downstream keys off these.
-3. `t` four times on the beat if the BPM readout looks wrong. `T` releases it
-   back to auto.
-4. `←` / `→` — exposure, for how bright the room actually is.
+1. `[` / `]` — trim audio gain until the BASS/MIDS/HIGH meters peak around
+   0.7-0.9 on the loud parts. Everything downstream keys off these.
+2. `t` four times on the beat if the BPM readout looks wrong. `T` releases it
+   back to automatic.
+3. `←` / `→` — exposure, for how bright the room actually is.
+4. `k` if the venue has asked for no strobe.
+5. `\` is BLACKOUT. Worth knowing before you need it.
+
+> The repo carries ~160MB of clips in `nomu_gifs/`, so the first clone is slow.
+> `git clone --depth 1` if you only need to run it.
 
 ## Cameras
 
@@ -251,6 +272,7 @@ run at zero strength.
 
 | | |
 | --- | --- |
+| `run.command` | the launcher — double-click it |
 | `index.html` | markup, styles, SVG filters for the DOM overlays |
 | `shaders.js` | all GLSL |
 | `app.js` | everything else |
@@ -305,7 +327,8 @@ They are never the hero and never hang off the frame edge.
 ## Verifying a change
 
 `node --check` is not verification for this project — it catches syntax, not
-`ReferenceError`. Serve the page, open the console and paste `smoke-test.js`:
+`ReferenceError`. Run `./run.command`, open the console and paste
+`smoke-test.js`:
 it stubs the media APIs, clicks the real start button, runs the loop, exercises
 every world, preset and hotkey, and asserts frames actually rendered with no
 errors. Front the browser tab first — a hidden tab pauses
