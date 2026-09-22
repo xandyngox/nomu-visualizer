@@ -2,6 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <!-- index.html itself is the one file the cache-busted script tags below
+       cannot protect: if the browser serves a stale copy of THIS file, you get
+       old markup and old CSS against fresh JS. that is how a set of blend-mode
+       changes silently did nothing. -->
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>visualizer</title>
   <style>
     /* chrome palette — cold bone-white on near-black. deliberately not the
@@ -182,12 +189,17 @@
       filter: url(#vhs-text-filter);
     }
     #hud .tag { margin-bottom: 8px; }
+    /* every layer above the camera composite blends with `lighten`, which is
+       max(backdrop, source) per channel. an overlay can only make a pixel
+       brighter — it can never replace what is underneath — so a camera panel
+       is never covered by the artwork sitting on top of it. */
     #text-overlay {
       position: fixed;
       inset: 0;
       pointer-events: none;
       color: #fff;
       z-index: 5;
+      mix-blend-mode: lighten;
       filter: url(#vhs-text-filter);
     }
     #code-lines {
@@ -197,6 +209,7 @@
       color: #fff;
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
       z-index: 3;
+      mix-blend-mode: lighten;
       overflow: hidden;
     }
     .blotch {
@@ -217,14 +230,16 @@
       inset: 0;
       pointer-events: none;
       z-index: 4;
-      /* grayscale+sepia+hue-rotate collapses the GIFs to the blue palette;
-         brightness cranked for the blown-out look; posterize to match crush */
+      /* luma -> palette ramp, then lighten so tiles add light over the
+         cameras rather than punching holes in them */
+      mix-blend-mode: lighten;
+      opacity: 0.85;
       filter: url(#gif-palette);
     }
     .gif-tile {
       position: absolute;
       overflow: hidden;
-      border: 1px solid rgba(232, 238, 255, 0.28);
+      border: 1px solid rgba(232, 238, 255, 0.22);
     }
     .gif-tile img {
       width: 100%;
@@ -241,6 +256,7 @@
       height: 100vh;
       pointer-events: none;
       z-index: 6;
+      mix-blend-mode: lighten;
     }
     /* positioned from the top-left by JS against the layout grid, so the
        transform is an absolute offset rather than a centring trick */

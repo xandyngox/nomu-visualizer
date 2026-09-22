@@ -885,8 +885,17 @@ function compositeCameras() {
   const cells = currentCells();
   gl.useProgram(PROG.cell.p);
 
-  // painter's order — later panels sit on top of earlier ones
-  for (let i = 0; i < cells.length; i++) {
+  // painter's order, and the order is deliberate: everything that is not a
+  // camera draws first, cameras draw last. the generated world and the meter
+  // are context; the performer and the crowd are the subject, and a subject
+  // that can be buried under a decorative panel is not the subject.
+  const order = cells.map((_, i) => i).sort((a, b) => {
+    const aCam = panels.length ? panels[a].src < cams.length : true;
+    const bCam = panels.length ? panels[b].src < cams.length : true;
+    return (aCam === bCam) ? a - b : (aCam ? 1 : -1);
+  });
+
+  for (const i of order) {
     const srcIdx = panels.length ? panels[i].src % sources.length : 0;
     const src = sources[srcIdx];
     let [cx, cy, cw, ch] = cells[i];
@@ -2579,16 +2588,18 @@ function safeOverlap(x, y, w, h) {
   return (ox * oy) / Math.max(1e-6, w * h);
 }
 
-// pick a grid slot that mostly misses the centre. falls back to the least-bad
-// option rather than looping forever on a crowded frame.
-function pickEdgeSlot(cols, rows, spanX, spanY, maxOverlap) {
+// pick a spot that mostly misses the centre. position is continuous, not
+// snapped to a grid — tiles used to land on a 12x8 lattice, which lined their
+// edges up with each other and read as a grid however small they were.
+// falls back to the least-bad option rather than looping forever.
+function pickEdgeSpot(w, h, maxOverlap) {
   let best = null;
-  for (let i = 0; i < 12; i++) {
-    const col = Math.floor(Math.random() * (cols - spanX + 1));
-    const row = Math.floor(Math.random() * (rows - spanY + 1));
-    const ov = safeOverlap(col / cols, row / rows, spanX / cols, spanY / rows);
-    if (ov <= maxOverlap) return { col, row };
-    if (!best || ov < best.ov) best = { col, row, ov };
+  for (let i = 0; i < 14; i++) {
+    const x = Math.random() * (1 - w);
+    const y = Math.random() * (1 - h);
+    const ov = safeOverlap(x, y, w, h);
+    if (ov <= maxOverlap) return { x, y };
+    if (!best || ov < best.ov) best = { x, y, ov };
   }
   return best;
 }
@@ -2612,15 +2623,11 @@ function spawnGifTile(opts) {
   const bar = letterbox * H;
   // snapped to the same 12x8 grid as everything else. free placement is what
   // made these read as scattered stickers rather than part of a composition.
-  const cols = 12;
-  const rows = 8;
-  const cw = W / cols;
-  const rh = (H - bar * 2) / rows;
-  const spanX = 2 + Math.floor(Math.random() * 3);
-  const spanY = 1 + Math.floor(Math.random() * 2);
-  const slot = pickEdgeSlot(cols, rows, spanX, spanY, 0.25);
-  const col = slot.col;
-  const row = slot.row;
+  // continuous sizes, a touch smaller than the old 2-4 grid spans, with the
+  // aspect chosen independently so no two tiles share a shape
+  const fw = 0.10 + Math.random() * 0.15;
+  const fh = Math.max(0.06, Math.min(0.28, fw * (0.45 + Math.random() * 1.1)));
+  const spot = pickEdgeSpot(fw, fh, 0.25);
 
   const targetOp = 0.26 + Math.random() * 0.20;
   const lifespan = opts.lifespan ?? (1000 + Math.random() * 3000);
@@ -2628,10 +2635,10 @@ function spawnGifTile(opts) {
 
   const el = document.createElement('div');
   el.className = 'gif-tile';
-  el.style.left = Math.round(col * cw) + 'px';
-  el.style.top = Math.round(bar + row * rh) + 'px';
-  el.style.width = Math.round(spanX * cw) + 'px';
-  el.style.height = Math.round(spanY * rh) + 'px';
+  el.style.left = Math.round(spot.x * W) + 'px';
+  el.style.top = Math.round(bar + spot.y * (H - bar * 2)) + 'px';
+  el.style.width = Math.round(fw * W) + 'px';
+  el.style.height = Math.round(fh * (H - bar * 2)) + 'px';
   el.style.opacity = targetOp.toFixed(2);
 
   const img = document.createElement('img');
@@ -2991,23 +2998,19 @@ function spawnBlotch() {
   const W = window.innerWidth;
   const H = window.innerHeight;
   const bar = letterbox * H;
-  // one type size, snapped to the same 12x8 grid the clips use. varying the
-  // size per block was what made these look like scattered junk.
-  const fontSize = 12;
-  const cols = 12;
-  const rows = 8;
-  const cw = W / cols;
-  const rh = (H - bar * 2) / rows;
-  const spanX = 2 + Math.floor(Math.random() * 3);
-  const spanY = 1 + Math.floor(Math.random() * 2);
-  const slot = pickEdgeSlot(cols, rows, spanX, spanY, 0.15);
-  const col = slot.col;
-  const row = slot.row;
+  // one type size, but free placement and continuous dimensions. these used to
+  // snap to a 12x8 lattice, so their edges lined up with each other and with
+  // the GIF tiles — which is what made a screen of small blocks still read as
+  // a grid. slightly smaller than before, and no two the same shape.
+  const fontSize = 11;
+  const fw = 0.08 + Math.random() * 0.13;
+  const fh = Math.max(0.05, Math.min(0.24, fw * (0.4 + Math.random() * 1.2)));
+  const spot = pickEdgeSpot(fw, fh, 0.15);
 
-  const width = Math.round(spanX * cw);
-  const height = Math.round(spanY * rh);
-  const x = Math.round(col * cw);
-  const y = Math.round(bar + row * rh);
+  const width = Math.round(fw * W);
+  const height = Math.round(fh * (H - bar * 2));
+  const x = Math.round(spot.x * W);
+  const y = Math.round(bar + spot.y * (H - bar * 2));
   const lineCount = Math.max(1, Math.floor(height / (fontSize * 1.15)));
   const targetOp = 0.14 + Math.random() * 0.16;
   const lineChars = Math.max(4, Math.floor(width / (fontSize * 0.62)));

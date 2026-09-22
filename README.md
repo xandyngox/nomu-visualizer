@@ -238,6 +238,21 @@ run at zero strength.
 | `app.js` | everything else |
 | `nomu_gifs/` | the floating GIF tiles |
 
+## Layer order
+
+Camera panels always draw **last** inside the composite, so nothing can bury
+them. The generated world and the spectrum meter are context; the performer and
+the crowd are the subject.
+
+Every layer above the composite — the name, the data blocks, the GIF tiles, the
+registration marks — blends with `lighten`, which is `max(backdrop, source)`
+per channel. An overlay can only make a pixel brighter, never replace it, so a
+camera underneath always survives whatever is sitting on top of it.
+
+Tile position and size are continuous, not snapped to a grid. They used to land
+on a 12x8 lattice, which lined their edges up with each other and read as a
+grid however small they got.
+
 ## Things that are deliberately not here
 
 - **Hard binary block patterns.** The motion wake used to be drawn as
