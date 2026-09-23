@@ -43,6 +43,8 @@ microphone access to pages opened from a `file://` path, so double-clicking
    0.7-0.9 on the loud parts. Everything downstream keys off these.
 2. `t` four times on the beat if the BPM readout looks wrong. `T` releases it
    back to automatic.
+   The gain steps are proportional, so a press is the same relative change at
+   any setting, and it goes down to 0.02 for a hot line-in in a loud room.
 3. `←` / `→` — exposure, for how bright the room actually is.
 4. `k` if the venue has asked for no strobe.
 5. `\` is BLACKOUT. Worth knowing before you need it.
@@ -236,7 +238,7 @@ quiet passages sit at genuinely crisp 1px, a transient hit opens the ceiling up.
 | `g` | text font mode (BEAT / STROBE / HOLD) |
 | `l` / `L` | panel preset / auto-layout |
 | `o` | aspect 16:9 (default, full frame) / 2.00 / 2.39 |
-| `,` / `.` | output size — shrink / grow the whole picture |
+| `,` / `.` | output size 20-100% (shift = coarse) |
 | `<` / `>` | nudge the picture up / down |
 | `u` | registration marks |
 | `j` | glitch reactivity 0 / .5 / 1 |
@@ -260,12 +262,19 @@ again. `a` hands control back immediately.
 `k` exists because some venues ask for no strobe. It kills both the white
 strobe and the negative flashes.
 
+The strobe needs a real transient, fires a short burst, and then will not fire
+again for about 600ms however loud things stay. It used to be `level > 0.80 and
+every other frame`, which on loud music is a 30Hz full-white flash held for as
+long as the level stayed up — and no amount of gain trimming could tame that,
+because a peak-following level simply sits high through a loud passage. Under a
+sustained loud signal it now produces about 5 flashes a second rather than 30.
+
 ## Fitting the output
 
 Projectors commonly overscan, so the edges of a full-bleed frame fall off the
-screen. `,` and `.` resize the whole picture between 50% and 100%, leaving a
-black margin, and `<` / `>` nudge it up or down by up to a quarter of the
-screen.
+screen. `,` and `.` resize the whole picture between 20% and 100%, leaving a black
+margin — hold shift for coarse steps. `<` / `>` nudge it up or down. Both work
+in fullscreen, and both persist.
 
 Shrinking anchors to the TOP of the screen, not the middle. Scaling from the
 centre splits the margin evenly above and below, which drops the picture down

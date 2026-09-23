@@ -1861,7 +1861,7 @@ function updateScheduler() {
   }
 
   // occasional single-bar negative flash on a downbeat
-  if (strobeEnabled && Math.random() < 0.06) invertUntil = performance.now() + 90;
+  if (strobeEnabled && Math.random() < 0.015) invertUntil = performance.now() + 70;
 }
 
 // ---------- perf governor ----------
@@ -1951,6 +1951,28 @@ let blackout = false;
 let frameCount = 0;
 let lastFrameAt = 0;
 let invertUntil = 0;
+// The strobe used to be `level > 0.80 && every other frame`, which on loud
+// music is a 30Hz full-white flash held for as long as the level stayed up —
+// genuinely painful, and nothing about the gain control could tame it because
+// a peak-following level sits high through a loud passage.
+//
+// It now needs a real transient, fires a short burst, and then will not fire
+// again for a moment however loud things stay.
+let strobeBurstUntil = 0;
+let strobeReadyAt = 0;
+const STROBE_BURST_MS = 70;
+const STROBE_COOLDOWN_MS = 620;
+
+function strobeCheck(level, now) {
+  if (!strobeEnabled) return false;
+  if (now < strobeBurstUntil) return (frameCount & 1) === 0;
+  if (now >= strobeReadyAt && level > 0.92 && transients.bass > 0.22) {
+    strobeBurstUntil = now + STROBE_BURST_MS;
+    strobeReadyAt = now + STROBE_COOLDOWN_MS;
+    return true;
+  }
+  return false;
+}
 let strobeEnabled = true;
 let exposure = 1.0;
 let marksEnabled = true;
@@ -2219,7 +2241,7 @@ function loop() {
     gl.uniform3fv(u.u_dark, palCur.dark);
     gl.uniform3fv(u.u_mid, palCur.mid);
     gl.uniform3fv(u.u_bright, palCur.bright);
-    const strobe = (strobeEnabled && level > 0.80 && (frameCount & 1) === 0) ? 1 : 0;
+    const strobe = strobeCheck(level, now) ? 1 : 0;
     gl.uniform1f(u.u_strobe, strobe);
     gl.uniform1f(u.u_invert, now < invertUntil ? 1 : 0);
     gl.uniform1f(u.u_contrast, 1.0 + 0.35 * bands.highs);
@@ -2311,7 +2333,7 @@ function loop() {
     gl.uniform1f(u.u_brightness, exposure * (
       0.85
       + 0.04 * Math.sin(now / 1800)
-      + transients.bass * 3.0
+      + transients.bass * 1.4
     ));
     gl.uniform1f(u.u_time, now / 1000);
   });
@@ -2351,7 +2373,7 @@ const HELP = [
   ['w / W', '3D world on / next world'],
   ['y', 'ascii  off / ramp / nomu'],
   ['s', 'spectrum panel on / off'],
-  [', / .', 'output size  (fit to projector)'],
+  [', / .', 'output size 20-100%  (shift = coarse)'],
   ['< / >', 'nudge output up / down'],
   ['o', 'aspect  16:9 / 2.00 / 2.39'],
   ['u', 'registration marks'],
@@ -2418,8 +2440,8 @@ function loadSettings() {
       letterboxIdx = Math.max(0, Math.min(LETTERBOX_MODES.length - 1, s.letterboxIdx));
     }
     if (typeof s.autoLayout === 'boolean') autoLayout = s.autoLayout;
-    if (typeof s.outputScale === 'number') outputScale = Math.max(0.5, Math.min(1, s.outputScale));
-    if (typeof s.outputOffsetY === 'number') outputOffsetY = Math.max(-0.25, Math.min(0.25, s.outputOffsetY));
+    if (typeof s.outputScale === 'number') outputScale = Math.max(0.20, Math.min(1, s.outputScale));
+    if (typeof s.outputOffsetY === 'number') outputOffsetY = Math.max(-0.6, Math.min(0.6, s.outputOffsetY));
   } catch (e) { /* ignore */ }
 }
 
@@ -2531,10 +2553,18 @@ window.addEventListener('keydown', (e) => {
     holdFx();   // you drove it — the scheduler backs off for a while
     updateFxTags();
   } else if (k === ',' || k === '.') {
-    outputScale = Math.max(0.5, Math.min(1.0, outputScale + (k === '.' ? 0.02 : -0.02)));
+    // down to 20%: a projector throwing well past the screen needs a lot more
+    // headroom than a few percent. shift for coarse steps so getting there
+    // does not take thirty presses.
+    const step = e.shiftKey ? 0.08 : 0.02;
+    outputScale = Math.max(0.20, Math.min(1.0,
+      outputScale + (k === '.' ? step : -step)));
     applyOutputScale();
   } else if (k === '<' || k === '>') {
-    outputOffsetY = Math.max(-0.25, Math.min(0.25, outputOffsetY + (k === '>' ? 0.01 : -0.01)));
+    // the nudge range grows with the margin — at 20% there is most of a screen
+    // to move around in
+    const step = 0.015;
+    outputOffsetY = Math.max(-0.6, Math.min(0.6, outputOffsetY + (k === '>' ? step : -step)));
     applyOutputScale();
   } else if (k === '?' && e.shiftKey && e.altKey) {
     outputScale = 1.0; outputOffsetY = 0;
@@ -2560,8 +2590,12 @@ window.addEventListener('keydown', (e) => {
     const t = tag('freeze-tag');
     if (t) t.textContent = frozen ? 'FROZEN' : '';
   } else if (k === '[' || k === ']') {
-    const step = e.shiftKey ? 0.5 : 0.1; // shift for coarse steps
-    audioGain = Math.max(0.2, Math.min(5.0, audioGain + (k === ']' ? step : -step)));
+    // multiplicative, so a step is the same proportional change everywhere.
+    // linear 0.1 steps off a floor of 0.2 meant the bottom of the range was
+    // three coarse notches wide and 0.2 was still too hot for a loud room.
+    const factor = e.shiftKey ? 1.6 : 1.12;
+    audioGain = Math.max(0.02, Math.min(8.0,
+      k === ']' ? audioGain * factor : audioGain / factor));
   } else if (k === 'ArrowUp' || k === 'ArrowDown') {
     e.preventDefault(); // block page scroll
     const step = e.shiftKey ? 0.5 : 0.1;
