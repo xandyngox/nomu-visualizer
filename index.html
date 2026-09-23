@@ -35,10 +35,15 @@
       width: 100vw;
       height: 100vh;
     }
+    /* anchored to the TOP centre, not the middle. scaling from the middle
+       splits the black margin evenly above and below, which drops the picture
+       down the screen; anchoring to the top keeps it up against the top edge
+       and puts all the margin underneath, where a projector's bottom edge
+       usually is anyway. */
     #stage {
       position: fixed;
       inset: 0;
-      transform-origin: 50% 50%;
+      transform-origin: 50% 0%;
       will-change: transform;
     }
     #ui {

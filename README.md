@@ -237,6 +237,7 @@ quiet passages sit at genuinely crisp 1px, a transient hit opens the ceiling up.
 | `l` / `L` | panel preset / auto-layout |
 | `o` | aspect 16:9 (default, full frame) / 2.00 / 2.39 |
 | `,` / `.` | output size — shrink / grow the whole picture |
+| `<` / `>` | nudge the picture up / down |
 | `u` | registration marks |
 | `j` | glitch reactivity 0 / .5 / 1 |
 | `y` | ascii: off / ramp / nomu |
@@ -263,7 +264,13 @@ strobe and the negative flashes.
 
 Projectors commonly overscan, so the edges of a full-bleed frame fall off the
 screen. `,` and `.` resize the whole picture between 50% and 100%, leaving a
-black margin. It scales the canvas and every overlay together as one unit —
+black margin, and `<` / `>` nudge it up or down by up to a quarter of the
+screen.
+
+Shrinking anchors to the TOP of the screen, not the middle. Scaling from the
+centre splits the margin evenly above and below, which drops the picture down
+the screen; anchoring to the top keeps it against the top edge and puts all the
+margin underneath. It scales the canvas and every overlay together as one unit —
 scaling only the canvas would leave the name, the readouts and the
 registration marks at full size and out of register with the frames they mark.
 The size is shown in the HUD and remembered between sessions.

@@ -1960,11 +1960,22 @@ let marksEnabled = true;
 // stage in a few percent is the fix, and it has to move the overlays with the
 // canvas or they drift out of register with the frames they mark up.
 let outputScale = 1.0;
+// vertical nudge as a fraction of viewport height, for lining the picture up
+// with a projector that is not squarely aimed
+let outputOffsetY = 0;
 const stageEl = tag('stage');
 function applyOutputScale() {
-  if (stageEl) stageEl.style.transform = `scale(${outputScale.toFixed(3)})`;
+  if (stageEl) {
+    // translate before scale: the offset is in screen space, so it should not
+    // itself be scaled down as the picture shrinks
+    stageEl.style.transform =
+      `translateY(${(outputOffsetY * 100).toFixed(2)}vh) scale(${outputScale.toFixed(3)})`;
+  }
   const t = tag('size-tag');
-  if (t) t.textContent = Math.round(outputScale * 100) + '%';
+  if (t) {
+    t.textContent = Math.round(outputScale * 100) + '%'
+      + (outputOffsetY ? ` ${outputOffsetY > 0 ? '+' : ''}${Math.round(outputOffsetY * 100)}` : '');
+  }
 }
 
 // how strongly the effects follow the control mask rather than applying a flat
@@ -2341,6 +2352,7 @@ const HELP = [
   ['y', 'ascii  off / ramp / nomu'],
   ['s', 'spectrum panel on / off'],
   [', / .', 'output size  (fit to projector)'],
+  ['< / >', 'nudge output up / down'],
   ['o', 'aspect  16:9 / 2.00 / 2.39'],
   ['u', 'registration marks'],
   ['g', 'text font mode'],
@@ -2361,7 +2373,7 @@ const HELP = [
 
 // flat list of the single keys HELP claims to document, for the drift check
 const HELP_KEYS = ['f','h','i','\\','r','c','C','x','X','p','P','l','L','a','w','W','y','o','u','g',
-                   'v','n','t','T','k','j','s',',','.','?'];
+                   'v','n','t','T','k','j','s',',','.','<','>','?'];
 
 function buildHelp() {
   const el = tag('help');
@@ -2383,7 +2395,7 @@ function saveSettings() {
     localStorage.setItem('nomu-vis', JSON.stringify({
       audioGain, waveGain, exposure, scaleIdx, autoScale, strobeEnabled, fontMode,
       settingsVersion: 2,
-      autoCamCycle, camDisabled: disabled, letterboxIdx, autoLayout, outputScale,
+      autoCamCycle, camDisabled: disabled, letterboxIdx, autoLayout, outputScale, outputOffsetY,
     }));
   } catch (e) { /* private window / blocked storage — settings just don't persist */ }
 }
@@ -2407,6 +2419,7 @@ function loadSettings() {
     }
     if (typeof s.autoLayout === 'boolean') autoLayout = s.autoLayout;
     if (typeof s.outputScale === 'number') outputScale = Math.max(0.5, Math.min(1, s.outputScale));
+    if (typeof s.outputOffsetY === 'number') outputOffsetY = Math.max(-0.25, Math.min(0.25, s.outputOffsetY));
   } catch (e) { /* ignore */ }
 }
 
@@ -2520,8 +2533,11 @@ window.addEventListener('keydown', (e) => {
   } else if (k === ',' || k === '.') {
     outputScale = Math.max(0.5, Math.min(1.0, outputScale + (k === '.' ? 0.02 : -0.02)));
     applyOutputScale();
-  } else if (k === '/' && e.shiftKey) {
-    outputScale = 1.0;
+  } else if (k === '<' || k === '>') {
+    outputOffsetY = Math.max(-0.25, Math.min(0.25, outputOffsetY + (k === '>' ? 0.01 : -0.01)));
+    applyOutputScale();
+  } else if (k === '?' && e.shiftKey && e.altKey) {
+    outputScale = 1.0; outputOffsetY = 0;
     applyOutputScale();
   } else if (k === 's') {
     spectrumEnabled = !spectrumEnabled;
