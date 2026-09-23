@@ -236,6 +236,7 @@ quiet passages sit at genuinely crisp 1px, a transient hit opens the ceiling up.
 | `g` | text font mode (BEAT / STROBE / HOLD) |
 | `l` / `L` | panel preset / auto-layout |
 | `o` | aspect 16:9 (default, full frame) / 2.00 / 2.39 |
+| `,` / `.` | output size — shrink / grow the whole picture |
 | `u` | registration marks |
 | `j` | glitch reactivity 0 / .5 / 1 |
 | `y` | ascii: off / ramp / nomu |
@@ -257,6 +258,22 @@ again. `a` hands control back immediately.
 
 `k` exists because some venues ask for no strobe. It kills both the white
 strobe and the negative flashes.
+
+## Fitting the output
+
+Projectors commonly overscan, so the edges of a full-bleed frame fall off the
+screen. `,` and `.` resize the whole picture between 50% and 100%, leaving a
+black margin. It scales the canvas and every overlay together as one unit —
+scaling only the canvas would leave the name, the readouts and the
+registration marks at full size and out of register with the frames they mark.
+The size is shown in the HUD and remembered between sessions.
+
+Panel shapes are also kept near the camera's own aspect. Panel width and height
+are fractions of frame width and height, so a height multiplier of exactly 1.0
+produces a panel with the frame's aspect — which for a 16:9 camera means the
+cell's cover-fit crops nothing at all. The multiplier range is centred on 1.0,
+so on a 16:9 output at least 78% of the camera survives into any panel, against
+59% before.
 
 ## Performance
 

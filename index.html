@@ -35,6 +35,12 @@
       width: 100vw;
       height: 100vh;
     }
+    #stage {
+      position: fixed;
+      inset: 0;
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
     #ui {
       position: fixed;
       inset: 0;
@@ -284,6 +290,12 @@
   </style>
 </head>
 <body>
+  <!-- everything that makes up the picture lives in #stage so the output can
+       be resized as a single unit. scaling only the canvas would leave the
+       name, the readouts and the registration marks at full size and out of
+       register with the frames they belong to. the start panel and the hotkey
+       sheet sit outside it, so they stay readable whatever the output size. -->
+  <div id="stage">
   <canvas id="gl"></canvas>
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -333,6 +345,7 @@
       &nbsp;·&nbsp; wave <span id="wave-tag">1.00×</span>
       &nbsp;·&nbsp; exp <span id="exp-tag">1.00×</span>
       &nbsp;·&nbsp; <span id="scale-tag">100%</span>
+      &nbsp;·&nbsp; size <span id="size-tag">100%</span>
       &nbsp;·&nbsp; <span id="fps-tag">60</span> fps
       &nbsp;<span id="freeze-tag"></span>&nbsp;<span id="blackout-tag"></span>&nbsp;<span id="camauto-tag"></span>&nbsp;<span id="ascii-tag"></span>&nbsp;<span id="strobe-tag"></span>
     </div>
@@ -343,6 +356,8 @@
       <div class="row"><span class="lbl">HIGH</span><div class="bar"><div id="b-highs"></div></div></div>
     </div>
   </div>
+
+  </div><!-- /#stage -->
 
   <div id="help" class="hidden"></div>
 

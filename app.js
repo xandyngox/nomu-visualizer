@@ -543,10 +543,14 @@ function makePanel(src, role, minWidth) {
   const lo = Math.min(MAX_SPAN, Math.max(r.min * m.scale, minWidth || 0));
   const hi = Math.min(MAX_SPAN, Math.max(r.max * m.scale, minWidth || 0));
   const w = lo + Math.random() * Math.max(0.01, hi - lo);
-  // height is independent of width, so panels are never uniformly square and
-  // never all the same shape. accents stay compact; heroes can run tall.
-  const aspect = role === 'ACCENT' ? (0.7 + Math.random() * 0.9)
-                                   : (0.6 + Math.random() * 1.1);
+  // height is independent of width, so panels are never all the same shape —
+  // but the range is now centred on 1.0. w and h are fractions of frame width
+  // and height, so a multiplier of exactly 1.0 gives a panel with the frame's
+  // aspect, which for a 16:9 camera means NO crop at all. The old 0.6-1.7
+  // range put most panels well away from that, and the cell's cover-fit then
+  // threw away a third of the picture — which is what read as "zoomed in".
+  const aspect = role === 'ACCENT' ? (0.82 + Math.random() * 0.42)
+                                   : (0.78 + Math.random() * 0.50);
   const h = Math.max(0.13, Math.min(MAX_SPAN, w * aspect));
   const ang = Math.random() * Math.PI * 2;
   // camera and world panels may hang off the frame edge — a cropped shot reads
@@ -555,8 +559,14 @@ function makePanel(src, role, minWidth) {
   const gifLo = cams.length + (worldEnabled ? 1 : 0) + (spectrumEnabled ? 1 : 0);
   const graphic = src === spectrumSrcIndex() ||
     (gifsEnabled && src >= gifLo && src < gifLo + gifSourceCount());
-  const xLo = graphic ? 0 : -0.10, xHi = graphic ? 1 - w : 1.20 - w;
-  const yLo = graphic ? 0 : -0.08, yHi = graphic ? 1 - h : 1.16 - h;
+  // much less bleed than before. a little crop by the frame edge still reads
+  // as composed; a third of a panel hanging outside is just lost picture.
+  const xLo = graphic ? 0 : -0.05, xHi = graphic ? 1 - w : 1.05 - w;
+  const yLo = graphic ? 0 : -0.04, yHi = graphic ? 1 - h : 1.04 - h;
+  // triangular rather than uniform: averaging two rolls peaks the distribution
+  // at the middle of the allowed range, so panels gather toward the centre of
+  // the frame instead of spreading evenly into the corners.
+  const centred = () => (Math.random() + Math.random()) / 2;
   return {
     src,
     graphic,
@@ -568,8 +578,8 @@ function makePanel(src, role, minWidth) {
     band: 0,
     // allowed to hang off the frame edge — a panel cropped by the frame looks
     // composed, a panel politely inside it looks like a thumbnail
-    x: xLo + Math.random() * Math.max(0, xHi - xLo),
-    y: yLo + Math.random() * Math.max(0, yHi - yLo),
+    x: xLo + centred() * Math.max(0, xHi - xLo),
+    y: yLo + centred() * Math.max(0, yHi - yLo),
     w, h,
     vx: Math.cos(ang) * m.speed,
     vy: Math.sin(ang) * m.speed * 0.7,
@@ -745,10 +755,10 @@ function updatePanels(dt) {
     p.y += p.vy * step;
     // turn around at a generous boundary rather than wrapping, so a panel
     // never pops from one edge to the other mid-drift
-    const bx = p.graphic ? 0 : -0.16;
-    const by = p.graphic ? 0 : -0.14;
-    const bw = p.graphic ? 1 : 1.16;
-    const bh = p.graphic ? 1 : 1.14;
+    const bx = p.graphic ? 0 : -0.07;
+    const by = p.graphic ? 0 : -0.06;
+    const bw = p.graphic ? 1 : 1.07;
+    const bh = p.graphic ? 1 : 1.06;
     if (p.x < bx) { p.x = bx; p.vx = Math.abs(p.vx); }
     if (p.x + p.w > bw) { p.x = bw - p.w; p.vx = -Math.abs(p.vx); }
     if (p.y < by) { p.y = by; p.vy = Math.abs(p.vy); }
@@ -1945,6 +1955,18 @@ let strobeEnabled = true;
 let exposure = 1.0;
 let marksEnabled = true;
 
+// overall size of the picture on the output. projectors commonly overscan, so
+// the edges of a full-bleed frame fall off the screen — pulling the whole
+// stage in a few percent is the fix, and it has to move the overlays with the
+// canvas or they drift out of register with the frames they mark up.
+let outputScale = 1.0;
+const stageEl = tag('stage');
+function applyOutputScale() {
+  if (stageEl) stageEl.style.transform = `scale(${outputScale.toFixed(3)})`;
+  const t = tag('size-tag');
+  if (t) t.textContent = Math.round(outputScale * 100) + '%';
+}
+
 // how strongly the effects follow the control mask rather than applying a flat
 // global strength. 0 reproduces the old uniform behaviour.
 let reactivity = 1.0;
@@ -2318,6 +2340,7 @@ const HELP = [
   ['w / W', '3D world on / next world'],
   ['y', 'ascii  off / ramp / nomu'],
   ['s', 'spectrum panel on / off'],
+  [', / .', 'output size  (fit to projector)'],
   ['o', 'aspect  16:9 / 2.00 / 2.39'],
   ['u', 'registration marks'],
   ['g', 'text font mode'],
@@ -2338,7 +2361,7 @@ const HELP = [
 
 // flat list of the single keys HELP claims to document, for the drift check
 const HELP_KEYS = ['f','h','i','\\','r','c','C','x','X','p','P','l','L','a','w','W','y','o','u','g',
-                   'v','n','t','T','k','j','s','?'];
+                   'v','n','t','T','k','j','s',',','.','?'];
 
 function buildHelp() {
   const el = tag('help');
@@ -2360,7 +2383,7 @@ function saveSettings() {
     localStorage.setItem('nomu-vis', JSON.stringify({
       audioGain, waveGain, exposure, scaleIdx, autoScale, strobeEnabled, fontMode,
       settingsVersion: 2,
-      autoCamCycle, camDisabled: disabled, letterboxIdx, autoLayout,
+      autoCamCycle, camDisabled: disabled, letterboxIdx, autoLayout, outputScale,
     }));
   } catch (e) { /* private window / blocked storage — settings just don't persist */ }
 }
@@ -2383,6 +2406,7 @@ function loadSettings() {
       letterboxIdx = Math.max(0, Math.min(LETTERBOX_MODES.length - 1, s.letterboxIdx));
     }
     if (typeof s.autoLayout === 'boolean') autoLayout = s.autoLayout;
+    if (typeof s.outputScale === 'number') outputScale = Math.max(0.5, Math.min(1, s.outputScale));
   } catch (e) { /* ignore */ }
 }
 
@@ -2493,6 +2517,12 @@ window.addEventListener('keydown', (e) => {
     else { asciiAmount = 0; asciiMode = 0; }
     holdFx();   // you drove it — the scheduler backs off for a while
     updateFxTags();
+  } else if (k === ',' || k === '.') {
+    outputScale = Math.max(0.5, Math.min(1.0, outputScale + (k === '.' ? 0.02 : -0.02)));
+    applyOutputScale();
+  } else if (k === '/' && e.shiftKey) {
+    outputScale = 1.0;
+    applyOutputScale();
   } else if (k === 's') {
     spectrumEnabled = !spectrumEnabled;
     reconcileLayout();
@@ -3221,6 +3251,7 @@ function startOverlayTimers() {
 // ---------- boot ----------
 
 loadSettings();
+applyOutputScale();
 updateLetterbox();
 renderScale = SCALE_STEPS[scaleIdx];
 refreshTags();
