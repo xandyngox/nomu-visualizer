@@ -2468,8 +2468,14 @@ function refreshTags() {
 window.addEventListener('keydown', (e) => {
   const k = e.key;
   if (k === 'f') {
-    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-    else document.exitFullscreen();
+    // both return promises that reject if the browser declines — without a
+    // user gesture, or when the platform refuses. nothing to do about it, but
+    // an unhandled rejection is noise in the console during a set.
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
   } else if (k === 'h') {
     // null-safe: a layer that has been removed from the markup must not throw
     // and kill the loop
